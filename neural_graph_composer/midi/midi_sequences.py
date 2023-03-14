@@ -13,11 +13,18 @@ spyroot@gmail.com
 import bisect
 import collections
 import logging
-from bisect import bisect, bisect_right
+from bisect import bisect, bisect_right, insort_left
 from functools import cache
 from typing import List, Callable, Any
 from typing import Tuple, Iterator, Optional
 
+import collections
+from bisect import bisect, bisect_right
+from functools import cache
+from typing import Optional, Iterator, Tuple, List, Callable, Any
+from typing import Tuple, Iterator, Optional
+
+import bisect
 from neural_graph_composer.midi.midi_abstract_event import MidiEvent
 from neural_graph_composer.midi.midi_key_signature import MidiKeySignature
 from neural_graph_composer.midi.midi_sequence import MidiNoteSequence
@@ -210,9 +217,11 @@ class MidiNoteSequences:
         else:
             if self.time_signatures and v.midi_time > self.time_signatures[-1].midi_time:
                 self._last_time_midi_seq_num += 1
-                
+
             # bisect.insort_left(self.time_signatures, v, key=lambda k: k.midi_time)
-            bisect.insort_left(self.time_signatures, v, key=lambda k: k.midi_time)
+            bisect.insort_left(
+                self.time_signatures, v, key=lambda k: (k.midi_time, self._last_time_midi_seq_num)
+            )
 
         self.time_signature.cache_clear()
 
@@ -232,8 +241,12 @@ class MidiNoteSequences:
                 self.key_signatures[0].midi_time, v.midi_time):
             self.key_signatures[0] = v
         else:
-            bisect.insort_left(self.key_signatures, v, key=lambda k: k.midi_time)
-            self._last_key_midi_seq_num += 1
+            if self.time_signatures and v.midi_time > self.time_signatures[-1].midi_time:
+                self._last_key_midi_seq_num += 1
+
+            bisect.insort_left(
+                self.key_signatures, v, key=lambda k: (k.midi_time, self._last_key_midi_seq_num)
+            )
 
         self.key_signature.cache_clear()
 
@@ -252,8 +265,10 @@ class MidiNoteSequences:
                 self.tempo_signatures[0].midi_time, v.midi_time):
             self.tempo_signatures[0] = v
         else:
-            bisect.insort_left(self.tempo_signatures, v, key=lambda k: k.midi_time)
-            self._last_tempo_midi_seq_num += 1
+            if self.time_signatures and v.midi_time > self.time_signatures[-1].midi_time:
+                self._last_tempo_midi_seq_num += 1
+
+            bisect.insort_left(self.tempo_signatures, v, key=lambda k: (k.midi_time, self._last_tempo_midi_seq_num))
 
         self.tempo_signature.cache_clear()
 
