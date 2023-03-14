@@ -10,10 +10,8 @@ Author Mus
 mbayramo@stanford.edu
 spyroot@gmail.com
 """
-import bisect
 import collections
 import logging
-from bisect import bisect, bisect_right, insort_left
 from functools import cache
 from typing import List, Callable, Any
 from typing import Tuple, Iterator, Optional
@@ -21,7 +19,7 @@ from typing import Tuple, Iterator, Optional
 import collections
 from bisect import bisect, bisect_right
 from functools import cache
-from typing import Optional, Iterator, Tuple, List, Callable, Any
+from typing import List, Callable, Any
 from typing import Tuple, Iterator, Optional
 
 import bisect
@@ -177,15 +175,19 @@ class MidiNoteSequences:
         return self.tempo_signatures[0].qpm
 
     def __repr__(self):
+        """
+        :return:
+        """
         return 'MidiNoteSequences(' + ', '.join([str(self.midi_seqs[k]) for k in self.midi_seqs]) + ')'
 
     def __str__(self):
+        """
+        :return:
+        """
         return 'MidiNoteSequences(' + ', '.join([str(self.midi_seqs[k]) for k in self.midi_seqs]) + ')'
 
-    def instrument_midi_seq_len(self, idx: int):
-        """Return the number of MIDI notes
-        in the MIDI sequence for the given instrument.
-
+    def instrument_midi_seq_len(self, idx: int) -> int:
+        """Return the number of MIDI notes in the MIDI sequence for the given instrument.
         :param idx: instrument id, The ID of the instrument
         :return:
         """
@@ -196,7 +198,7 @@ class MidiNoteSequences:
             return len(self.midi_seqs[idx].notes)
 
     @staticmethod
-    def is_close_to_zero(a, b, tol=1e-6):
+    def is_close_to_zero(a, b, tol=1e-6) -> bool:
         return abs(a - b) < tol
 
     def add_time_signatures(self, v: MidiTimeSignature) -> None:
@@ -215,6 +217,7 @@ class MidiNoteSequences:
                 self.time_signatures[0].midi_time, v.midi_time):
             self.time_signatures[0] = v
         else:
+            # we track order and if midi time the same we use order that received.
             if self.time_signatures and v.midi_time > self.time_signatures[-1].midi_time:
                 self._last_time_midi_seq_num += 1
 
@@ -241,6 +244,7 @@ class MidiNoteSequences:
                 self.key_signatures[0].midi_time, v.midi_time):
             self.key_signatures[0] = v
         else:
+            # we track order and if midi time the same we use order that received.
             if self.time_signatures and v.midi_time > self.time_signatures[-1].midi_time:
                 self._last_key_midi_seq_num += 1
 
@@ -265,6 +269,7 @@ class MidiNoteSequences:
                 self.tempo_signatures[0].midi_time, v.midi_time):
             self.tempo_signatures[0] = v
         else:
+            # we track order and if midi time the same we use order that received.
             if self.time_signatures and v.midi_time > self.time_signatures[-1].midi_time:
                 self._last_tempo_midi_seq_num += 1
 

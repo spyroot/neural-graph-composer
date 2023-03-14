@@ -10,7 +10,6 @@ amount = 0.5
 
 import math
 
-
 def compute_nearest_steps(step_per_sec, start_time, stop_time, cutoff=1.5, tempo=120):
     # Calculate adjusted MIDI start time in seconds based on step per second
     midi_start_time = start_time
