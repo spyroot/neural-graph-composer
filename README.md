@@ -1,2 +1,6 @@
-# neural-graph-composer
-This repo host cs224w project that explores idea to re present a music piece in graph structure and what we can learn from it.
+# Neural Graph Composer
+
+This repo host is a project that explores the idea re-resent a music piece in a 
+graph structure and what we can learn from it.
+
+# docs tbd
