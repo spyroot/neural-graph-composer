@@ -8,11 +8,13 @@ Mus spyroot@gmail.com
 import math
 from functools import cache
 from typing import Optional
+
+from .midi_seq import MidiSeq
 from .midi_spec import DEFAULT_PPQ
 from .midi_spec import DEFAULT_QPM
 
 
-class MidiTempoSignature:
+class MidiTempoSignature(MidiSeq):
     """
     """
     SECONDS_PER_MINUTE = 60.0
@@ -26,12 +28,10 @@ class MidiTempoSignature:
         :param qpm: The tempo, in quarter notes per minute.
         :param resolution: The ticks per quarter note of the MIDI sequence
         """
+        super().__init__()
         self.midi_time = midi_time
         self.resolution = resolution
         self.qpm = qpm
-
-    def __lt__(self, other):
-        return self.midi_time < other.midi_time
 
     @staticmethod
     def tempo_to_qpm(tempo: float) -> float:
@@ -73,7 +73,7 @@ class MidiTempoSignature:
         return qpm
 
     @staticmethod
-    def ppq_to_qpm(ppq,  tempo_microseconds_per_quarter_note, ticks_per_beat=4):
+    def ppq_to_qpm(ppq, tempo_microseconds_per_quarter_note, ticks_per_beat=4):
         """
         :param ppq:
         :param tempo_microseconds_per_quarter_note:
@@ -124,8 +124,15 @@ class MidiTempoSignature:
         return '{} qpm {:.2f} seconds'.format(
             self.midi_time, self.qpm)
 
+    def __lt__(self, other):
+        # print(f"__lt__ other {other.seq} mine {self.seq}")
+        if math.isclose(self.midi_time, other.midi_time):
+            return self.seq < other.seq
 
-class MidiTimeSignature:
+        return self.midi_time < other.midi_time
+
+
+class MidiTimeSignature(MidiSeq):
     """
     Time signature is expressed as 4 numbers.
     nn and dd represent the "numerator" and "denominator" of the
@@ -158,6 +165,7 @@ class MidiTimeSignature:
         :raise ValueError If `denominator` or `numerator` is less than or equal to 0, or if
                          `denominator` is not a negative power of 2.
         """
+        super().__init__()
         if not isinstance(denominator, int) or not isinstance(numerator, int):
             raise TypeError("Denominator and numerator must be integers.")
 
@@ -169,6 +177,7 @@ class MidiTimeSignature:
         self.denominator: int = denominator
         self.numerator: int = numerator
         self.midi_time: float = midi_time
+        self.seq = 0
 
     @property
     def measure_length(self) -> float:
@@ -220,15 +229,19 @@ class MidiTimeSignature:
         """
         :return:
         """
-        return "MidiTempoSignature(numerator={}, denominator={}, time={})".format(
-            self.numerator, self.denominator, self.midi_time)
+        return "MidiTempoSignature(seq={}, numerator={}, denominator={}, time={})".format(
+            self.seq, self.numerator, self.denominator, self.midi_time)
 
     def __str__(self):
         """
         :return:
         """
-        return '{}/{} at {:.2f} seconds'.format(
-            self.numerator, self.denominator, self.midi_time)
+        return 'seq {} {}/{} at {:.2f} seconds'.format(
+            self.seq, self.numerator, self.denominator, self.midi_time)
 
     def __lt__(self, other):
+        # print(f"__lt__ other {other.seq} mine {self.seq}")
+        if math.isclose(self.midi_time, other.midi_time):
+            return self.seq < other.seq
+
         return self.midi_time < other.midi_time

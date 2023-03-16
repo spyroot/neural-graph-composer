@@ -1,10 +1,11 @@
 """
 Midi note representation.
-TODO.  Take different sample Ableton , quantize and cross check for all quantization
+TODO. Take different sample Ableton , quantize and cross check for all quantization
 delta difference and add as unit test.
 
 Author Mus spyroot@gmail.com
 """
+import logging
 import math
 import warnings
 from decimal import Decimal
@@ -62,6 +63,16 @@ class MidiNoteJSONDecoder(json.JSONDecoder):
 
 
 class MidiNote(MidiEvent):
+    """Represents a midi note.
+    Note we maintain original information about instrument , program and the rest of data.
+    The point here in case we need reconstruct order for particular instrument,
+    find overlap etc. It good to have some reverse information.
+
+    At moment midi sequence object hold just a list.
+    On alternative implementation that I consider do in the future
+    represent events as interval tree.
+
+    """
     def __init__(self,
                  pitch: int,
                  start_time: float,
@@ -94,18 +105,20 @@ class MidiNote(MidiEvent):
 
         # Ensure that pitch is within the valid MIDI range.
         if not 0 <= pitch <= MAX_MIDI_PITCH:
-            warnings.warn(f"Pitch value {pitch} is out of range [0, 127]. Clamping to nearest valid value.")
+            warnings.warn(
+                f"Pitch value {pitch} is out of range [0, 127]. Clamping to nearest valid value.")
             pitch = max(0, min(MAX_MIDI_PITCH, pitch))
 
-            # Clamp velocity value to range [0, 127]
+        # clamp velocity value to range [0, 127]
         if not 0 <= velocity <= MAX_MIDI_VELOCITY:
-            warnings.warn(f"Velocity value {velocity} is out of range [0, 127]. Clamping to nearest valid value.")
+            warnings.warn(
+                f"Velocity value {velocity} is out of range [0, 127]. Clamping to nearest valid value.")
             velocity = max(0, min(MAX_MIDI_VELOCITY, velocity))
 
         assert end_time > start_time, f"End time value {end_time} should be greater than start time value {start_time}"
         assert isinstance(numerator, int) and numerator > 0, f"Numerator value {numerator} is not a valid value."
 
-        # Ensure that denominator is a power of 2.
+        # ensure that denominator is a power of 2.
         assert isinstance(denominator, int) and denominator > 0 and ((denominator & (denominator - 1)) == 0), \
             f"Denominator value {denominator} is not a valid value."
 
@@ -117,9 +130,13 @@ class MidiNote(MidiEvent):
         # midi instrument, program
         # note if all instruments merge to single instrument
         # then midi seq represent single midi seq.
+
+        # we keep program in case particular note need play on different program.
+        # this specifically for program change event.
         self._program: int = min(max(0, program), 255)
         if not 0 <= instrument <= 127:
-            warnings.warn("Invalid instrument value, should be in range [0, 127]. Clamping to valid range.")
+            warnings.warn(
+                "Invalid instrument value, should be in range [0, 127]. Clamping to valid range.")
 
         self._instrument = min(max(instrument, 0), 127)
 
@@ -148,6 +165,66 @@ class MidiNote(MidiEvent):
         self._quantized_start_step: int = quantized_start_step
         self._quantized_end_step: int = quantized_end_step
         self._is_quantized = quantized_start_step >= 0 and quantized_end_step >= 0
+
+    def __repr__(self) -> str:
+        """ Return a string representation of the MidiNote
+        object that can be used to recreate the object.
+        :return:
+        """
+        return 'MidiNote(start={:f}, end={:f}, pitch={}, pitch_name={}, velocity={})'.format(
+            self.start_time, self.end_time, self.pitch, self.pitch_name, self._velocity)
+
+    def __str__(self) -> str:
+        """Return a human-readable string representation of the Midi
+        :return:
+        """
+        return 'Note(start={:f}, end={:f}, pitch={}, pitch_name={}, velocity={})'.format(
+            self.start_time, self.end_time, self.pitch, self.pitch_name, self._velocity)
+
+    def __eq__(self, other: Any) -> bool:
+        if not isinstance(other, MidiNote):
+            return False
+        return (self.pitch == other.pitch and
+                self.velocity == other.velocity and
+                self.program == other.program and
+                self.instrument == other.instrument and
+                self.start_time == other.start_time and
+                self.end_time == other.end_time and
+                self.quantized_start_step == other.quantized_start_step and
+                self.quantized_end_step == other.quantized_end_step and
+                self.voice == other.voice and
+                self.numerator == other.numerator and
+                self.denominator == other.denominator and
+                self.is_drum == other.is_drum)
+
+    def __lt__(self, other: 'MidiNote') -> bool:
+        """
+
+        :param other:
+        :return:
+        """
+        if self.start_time != other.start_time:
+            return self.start_time < other.start_time
+        return self.end_time < other.end_time
+
+    def __le__(self, other: 'MidiNote') -> bool:
+        """Returns True if this note's start time is less than or
+        equal to the other note's start time.
+        If the start times are equal, the end times are compared.
+        """
+        if self.start_time < other.start_time:
+            return True
+        elif self.start_time == other.start_time:
+            return self.end_time <= other.end_time
+        else:
+            return False
+
+    @property
+    def velocity(self) -> int:
+        """Return the start time of the note in seconds.
+        :return: The start time of the note as a float.
+        """
+        return self._velocity
 
     @property
     def start_time(self) -> float:
@@ -373,24 +450,23 @@ class MidiNote(MidiEvent):
         if self.is_quantized():
             # Calculate duration based on new quantized steps
             old_duration = np.divide(quantized_end_step - quantized_start_step, sps)
-            print(f"old duration case on {old_duration}")
+            logging.debug(f"old duration case on {old_duration}")
             # duration_before_shift = (self.end_time - self.start_time) / sps
             self.quantized_start_step = max(0, quantized_start_step)
             self.quantized_end_step = self.quantized_start_step + old_duration
         else:
-            print(f"case two")
             start_shift = max(0.0, -self.start_time)
             end_shift = max(0.0, -self.end_time)
-            print(f"Old self.quantized_start_step {self.quantized_start_step}")
+            logging.debug(f"Old self.quantized_start_step {self.quantized_start_step}")
             self.quantized_start_step = quantized_start_step + int(start_shift * sps)
-            print(f"### quantized_end_step {quantized_end_step} shift {end_shift} sps {sps}")
+            logging.debug(f"### quantized_end_step {quantized_end_step} shift {end_shift} sps {sps}")
             self.quantized_end_step = quantized_end_step + int(end_shift * sps)
-            print(f"New self.quantized_end_step {self.quantized_end_step}")
+            logging.debug(f"New self.quantized_end_step {self.quantized_end_step}")
 
             # Set _is_quantized to True when quantifying for the first time.
             self._is_quantized = True
 
-        print(f"Quantize quantized_start_step {self.quantized_start_step} {self.quantized_end_step}")
+        logging.debug(f"Quantize quantized_start_step {self.quantized_start_step} {self.quantized_end_step}")
 
         # Do not allow notes to start or end in negative time.
         if self.quantized_start_step < 0:
@@ -403,40 +479,43 @@ class MidiNote(MidiEvent):
         # Do not allow notes to start or end in negative time.
         self.quantized_start_step = max(0.0, self.quantized_start_step)
         self.quantized_end_step = max(0.0, self.quantized_end_step)
-        print(f"New2 self.quantized_start_step {self.quantized_start_step}")
+        logging.debug(f"New2 self.quantized_start_step {self.quantized_start_step}")
 
         if self.quantized_end_step == self.quantized_start_step:
-            print("Executed this branch")
+            logging.debug("Executed this branch")
             self.quantized_end_step = max(min(self.quantized_end_step + 1, 999999), 1)
 
-        print(f"self.quantized_start_step {self.quantized_start_step} and end step {self.quantized_end_step}")
+        logging.debug(f"self.quantized_start_step {self.quantized_start_step} and end step {self.quantized_end_step}")
         # Adjust the end time based on the new quantized end step.
         new_end_time = np.around(np.divide(quantized_end_step, int(sps)), 2)
         new_start_time = np.around(np.divide(quantized_start_step, int(sps)), 2)
         # If the new end time is earlier than the original end time,
         # adjust the start time as well.
-        print(f"old timer {self.end_time} {self.start_time}")
-        print(f"New3 self.quantized_start_step {self.quantized_start_step}")
-        print(f"New new_end_time {new_end_time}")
+        logging.debug(f"old timer {self.end_time} {self.start_time}")
+        logging.debug(f"New3 self.quantized_start_step {self.quantized_start_step}")
+        logging.debug(f"New new_end_time {new_end_time}")
 
         new_start_time = max(0.0, min(new_start_time, self.end_time - 0.001))
         new_end_time = max(0.0, min(new_end_time, 999999 - 0.001))
 
         duration = self.end_time - self.start_time
         if new_end_time < self.end_time:
-            print(f"first case before {self.start_time} {new_end_time}")
+            logging.debug(f"first case before {self.start_time} {new_end_time}")
             self.start_time = new_start_time
-            print(f"first case set to {self.start_time} and new end time {self.start_time + duration}")
+            logging.debug(f"first case set to {self.start_time} and new end time {self.start_time + duration}")
             self.end_time = self.start_time + duration
         else:
-            print(f"second case new new_start_time time {new_start_time} new time {new_end_time}")
+            logging.debug(f"second case new new_start_time time {new_start_time} new time {new_end_time}")
             self.end_time = new_end_time
             self.start_time = new_start_time
 
         # self.start_time = round(max(0.0, new_end_time - duration), 2)
         # self.end_time = round(new_end_time, 2)
-        print(f"Done new start time {self.start_time} new end time {self.end_time}")
+        logging.debug(f"new start time {self.start_time} new end time {self.end_time}")
         self.quantized_start_step = max(0, self.quantized_start_step)
+
+        self.quantized_step = sps
+
 
     def quantize(self, sps: int = 4, amount: float = 0.5, min_step: Optional[int] = None):
         """Returns a new quantized note with the specified number of steps per second (sps),
@@ -466,29 +545,20 @@ class MidiNote(MidiEvent):
                                    Defaults to `None`, which uses the current quantized end step.
         :return: a new instance of the `MidiNote` class that is a copy of the current instance.
         """
-        return MidiNote(pitch=self.pitch, start_time=self.start_time, end_time=self.end_time,
-                        program=self.program, instrument=self.instrument, velocity=self._velocity,
+        return MidiNote(pitch=self.pitch,
+                        start_time=self.start_time,
+                        end_time=self.end_time,
+                        program=self.program,
+                        instrument=self.instrument,
+                        velocity=self._velocity,
                         quantized_start_step=quantized_start_step
                         if quantized_start_step is not None else self.quantized_start_step,
                         quantized_end_step=quantized_end_step
                         if quantized_end_step is not None else self.quantized_end_step,
-                        voice=self.voice, numerator=self.numerator, denominator=self.denominator,
+                        voice=self.voice,
+                        numerator=self.numerator,
+                        denominator=self.denominator,
                         is_drum=self.is_drum)
-
-    def __repr__(self) -> str:
-        """ Return a string representation of the MidiNote
-        object that can be used to recreate the object.
-        :return:
-        """
-        return 'MidiNote(start={:f}, end={:f}, pitch={}, pitch_name={}, velocity={})'.format(
-            self.start_time, self.end_time, self.pitch, self.pitch_name, self._velocity)
-
-    def __str__(self) -> str:
-        """Return a human-readable string representation of the Midi
-        :return:
-        """
-        return 'Note(start={:f}, end={:f}, pitch={}, pitch_name={}, velocity={})'.format(
-            self.start_time, self.end_time, self.pitch, self.pitch_name, self._velocity)
 
     @property
     def pitch(self):
@@ -504,20 +574,28 @@ class MidiNote(MidiEvent):
         return self._program
 
     @program.setter
-    def program(self, value):
+    def program(self, value) -> None:
+        """MIDI program
+        :param value:
+        :return:
+        """
         assert 0 <= value <= 255, f"Program value {value} is outside valid range (0-255)"
         self._program = value
 
     @quantized_start_step.setter
-    def quantized_start_step(self, value):
+    def quantized_start_step(self, value: float) -> None:
+        """If a note start quantized is set we set value and note quantize flag
+        :param value:
+        :return:
+        """
         if value < 0:
             raise ValueError("Quantized start step cannot be negative.")
         self._is_quantized = True
         self._quantized_start_step = value
 
     @quantized_end_step.setter
-    def quantized_end_step(self, value):
-        """
+    def quantized_end_step(self, value: float) -> None:
+        """If a note quantized we set value and note quantize flag.
         :param value:
         :return:
         """
@@ -572,8 +650,7 @@ class MidiNote(MidiEvent):
         return beat_duration
 
     def bpm(self) -> float:
-        """
-        Calculate the BPM (beats per minute) of the note, assuming
+        """Calculate the BPM (beats per minute) of the note, assuming
         a constant tempo throughout the note.
         This method assumes that the tempo is constant
         throughout the duration of the note.
@@ -661,9 +738,8 @@ class MidiNote(MidiEvent):
     def is_four_eighth_note(note: int, tempo: int, time_signature: Tuple[int, int]) -> bool:
         """Checks if the MIDI note value represents a four eighth note,
           which is a note that lasts for half a beat in 4/4 time signature.
-
-        :param tempo:
-        :param time_signature:
+        :param tempo: midi tempo
+        :param time_signature: midd time signature Tuple (4,4) etc.
         :param note:  note (int): MIDI note value.
         :return: True if the note represents a four eighth note, False otherwise.
         """
@@ -704,9 +780,31 @@ class MidiNote(MidiEvent):
         )
 
     @property
-    def event_end_start(self):
+    def event_end_start(self) -> float:
+        """Implements MidiEvent so caller construct seq of events
+        :return:  midi start time
+        """
         return self.start_time
 
     @property
-    def event_end_time(self):
+    def event_end_time(self) -> float:
+        """Implements MidiEvent so caller construct seq of events
+        :return: midi stop time
+        """
         return self.end_time
+
+    def shift_time(self, offset: float) -> None:
+        """Shift time
+        :param offset: offset that indicate how much we want offset
+        :return:
+        """
+        self._start_time += offset
+        self._end_time += offset
+
+    def stretch(self, amount: float) -> None:
+        """In place Stretch a note by amount
+        :param amount:
+        :return:
+        """
+        self._start_time *= amount
+        self._end_time *= amount

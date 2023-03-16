@@ -32,7 +32,7 @@ from .midi_time_signature import MidiTempoSignature
 
 
 # TODO evaluate two options.
-# Either use Interval Tree so we can do quick search based on Interval Trees
+# Either use Interval Tree, so we can do quick search based on Interval Trees
 # Option to use heap priority queue.
 # Note both method need evaluate and bench marked vs sorted list.
 #
@@ -95,8 +95,8 @@ class MidiNoteSequence(MidiEvents):
         # list of pitch bends
         self.pitch_bends: List[MidiPitchBend] = []
 
-        self.time: float = 0
-        self.reference_number: int
+        self.program = 0
+
         # 240 ticks per 16th note.
         # 480 ticks per 8th note
         # 960 ticks per quarter note
@@ -107,14 +107,10 @@ class MidiNoteSequence(MidiEvents):
         self.quantized_step: int = 0
         self.debug = is_debug
 
-        # midi source information
-        self.id: str
-
         self.resolution = resolution
-
-        self.tempo_signature: List[MidiTempoSignature] = []
         self.steps_per_quarter = 0
         self.steps_per_second = 0
+        self.tempo_signature: List[MidiTempoSignature] = []
 
     def __repr__(self):
         """
@@ -174,13 +170,23 @@ class MidiNoteSequence(MidiEvents):
             self._drum_events = notes_list
             self.total_time = max([n.end_time for n in self._drum_events], default=0.0)
 
-    def __len__(self):
+    def __len__(self) -> int:
+        """
+        :return:
+        """
         return len(self.notes)
 
-    def __getitem__(self, index):
+    def __getitem__(self, index) -> MidiNote:
+        """
+        :param index:
+        :return:
+        """
         return self.notes[index]
 
     def __iter__(self):
+        """
+        :return:
+        """
         return iter(self.notes)
 
     def append(self, note: MidiNote):
@@ -190,7 +196,7 @@ class MidiNoteSequence(MidiEvents):
         self.total_time = max(self.total_time, note.end_time)
 
     def extend(self, notes: List[MidiNote]):
-        """
+        """Extended midi seq
         :param notes:
         :return:
         """
@@ -198,7 +204,7 @@ class MidiNoteSequence(MidiEvents):
         self.total_time = max(self.total_time, max(note.end_time for note in notes))
 
     def as_note_seq(self) -> List[int]:
-        """Return note sequence as list.
+        """Return note sequence as list of int where each int is note pitch
         :return: list of ints
         """
         if self.notes:
@@ -254,7 +260,7 @@ class MidiNoteSequence(MidiEvents):
         self.control_changes.append(cv)
 
     def add_pitch_bends(self, pitch_bend: MidiPitchBend) -> None:
-        """
+        """Add pitch bend event.
         :param pitch_bend: is MidiPitchBend object
         :return: Nothing
         """
@@ -266,26 +272,23 @@ class MidiNoteSequence(MidiEvents):
         """
         return all(note.is_quantized() for note in self.notes)
 
-    def quantize(self, resolution: int):
-        """Quantizes the start and end times of each note to the nearest multiple of the resolution."""
-        for note in self.notes:
-            note.quantize(resolution)
-
-    def stretch(self, factor: float):
-        """Stretch each note in sequence by a factor.
+    def stretch(self, amount: float):
+        """In place stretch each note by amount
+        :param amount:
+        :return:
         """
-        for note in self.notes:
-            note.start_time *= factor
-            note.end_time *= factor
+        [n.stretch(amount) for n in self.notes]
+        self._adjust_total_time()
 
     def truncate(self, end_time: float):
-        """Truncates the sequence so that all notes end before `end_time`.
-        :param end_time: The new end time for the sequence
+        """In place truncates the note sequence so that all notes end before `end_time`.
+        and return new truncated note sequence.
+        :param end_time:
+        :return:
         """
         new_notes = []
         for note in self.notes:
             if note.end_time > end_time:
-                # Truncate the note
                 note = copy.deepcopy(note)
                 note.end_time = end_time
             new_notes.append(note)
@@ -297,9 +300,9 @@ class MidiNoteSequence(MidiEvents):
     def compute_intervals(seq_sorted_by_time: List[MidiNote],
                           num_splits: List[int],
                           skip_boundary: Optional[bool] = False) -> List[float]:
-        """Computes split intervals based on number of n  splits.
-        If note on boundary of a split if skip on boundary
-        is True and note in segment we append to a list of intervals.
+        """Computes split intervals based on number of n splits.
+        If adjust node on boundary and a skip_boundary is True
+        note not include in the interval.
 
         :param seq_sorted_by_time: a list of note sequence
         :param num_splits: list that store number of desired splits.
@@ -330,7 +333,7 @@ class MidiNoteSequence(MidiEvents):
     def split(self, span: float,
               skip_boundary: Optional[bool] = False):
         """
-        :param span: a required window size in second for a slice
+        :param span: a required window size in seconds for a slice
         :param skip_boundary: indicates whatever we want splitting on boundary
         :return:
         """
@@ -343,9 +346,7 @@ class MidiNoteSequence(MidiEvents):
             # sort if unsorted
             num_splits = sorted(span)
         else:
-            num_splits = np.arange(
-                span, self.total_time, span
-            )
+            num_splits = np.arange(span, self.total_time, span)
 
         # compute span interval that we chop
         # note here if we use interval tree that will reduce complexity
@@ -360,22 +361,16 @@ class MidiNoteSequence(MidiEvents):
 
         return MidiNoteSequence.extract_notes(intervals)
 
-    def shift_times(self, shift_time: float) -> None:
-        """Shifts the start and end times of all notes in the sequence by `time_shift`.
-        Method allows you to shift all the note start and end times.
+    def shift_times(self, offset: float) -> None:
+        """In place shifts the start and end times by offset
+        :param offset:
+        :return:
         """
-
         if self.is_quantized():
             raise ValueError("You need to quantize first")
 
-        for note in self.notes:
-            note.start_time += shift_time
-            note.end_time += shift_time
-
-        self.total_time += shift_time
-        # sort the notes by start time again
-        self.notes.sort(key=lambda note: note.start_time)
-        self.total_time += shift_time
+        [n.shift_time(offset) for n in self.notes]
+        self.total_time += offset
 
     def extract_notes(
             self, split_times: List[float]) -> List[Any]:
@@ -386,6 +381,7 @@ class MidiNoteSequence(MidiEvents):
 
         if len(split_times) < 2:
             raise TypeError(f"Split time {split_times} should have start and end.")
+
         assert all(t1 <= t2 for t1, t2 in zip(split_times[:-1], split_times[1:])), "Unsorted list of splits."
 
         if any(t >= self.total_time for t in split_times[:-1]):
@@ -417,10 +413,9 @@ class MidiNoteSequence(MidiEvents):
 
         return sub_sequences
 
-    def slice(self, start: float, end: float, is_strict: Optional[bool]):
-        """slice notes in specific start and end time.
-
-         This mainly for a case where midi seq has very long empty spaces.
+    def slice(self, start: float, end: float, is_strict: Optional[bool] = False):
+        """Slice notes in specific start and end time.
+           This mainly for a case where midi seq has very long empty spaces.
 
         - Notes starting before note start ignored so all notes > start
         - Notes after end are ignored i.e. all notes < before end
@@ -444,7 +439,7 @@ class MidiNoteSequence(MidiEvents):
             if note.start_time < start or \
                     note.start_time >= end:
                 continue
-            #
+
             new_note = copy.deepcopy(note)
             new_note.end_time = min(note.end_time, end)
             new_midi_seq.add_note(note)
@@ -460,20 +455,7 @@ class MidiNoteSequence(MidiEvents):
         """quantize to a nearest step based on step per second."""
         return int(midi_time * steps_per_second + (1 - cutoff))
 
-    # semi_quaver=
-    # quaver = 1/2
-    # crochet = 1
-    # minim = 2
-    # semibreve = 4
-
-    def quantize(self, quantized_factor):
-        """In place quantize this midi sequence.
-        :param quantized_factor: is quantized factor
-        :return:
-        """
-        self._quantize(quantized_factor)
-
-    def _quantize(self, amount: Optional[float] = 0.5):
+    def _quantize(self, sps: int = 4, amount: Optional[float] = 0.5):
         """Quantize corrects the timing of MIDI notes to a specific
         rhythmic grid notes.
 
@@ -485,40 +467,65 @@ class MidiNoteSequence(MidiEvents):
           which would move each note halfway between its original timing
           and the quantized grid position.
 
+        :param sps: the number of steps per second to use for quantization (default is 4).
         :param amount: dictates amount of quantization applied to each note
-        :return:
+        :return: None
         """
-        for note in self._notes:
+        new_notes = []
+        for note in self.notes:
             # quantize a note based on time to the nearest step
-            note.quantize(amount)
+            quantized_note = note.quantize(sps=sps, amount=amount)
+            new_notes.append(quantized_note)
             # update total_quantized_steps
             if note.quantized_end_step > self.total_quantized_steps:
                 self.total_quantized_steps = note.quantized_end_step
 
+        new_control_changes = []
         #  quantize control changes and text annotations.
-        for e in itertools.chain(self.control_changes):
+        for cc in itertools.chain(self.control_changes):
             # quantize the event time, disallowing negative time.
-            e.quantized_step = self.quantize_to_nearest_step(
-                e.time, amount)
-            assert (e.quantized_step < 0)
+            quantized_cc = cc.quantize(sps=sps, amount=amount)
+            new_control_changes.append(quantized_cc)
+
+        # update cc and notes
+        self.notes = new_notes
+        self.control_changes = new_control_changes
+
+    def quantize(self, sps: int = 4, amount: Optional[float] = 0.5) -> None:
+        """In place quantize midi sequence,
+        i.e.  Quantizes the start and end times of each note to
+        the nearest multiple based on resolution.
+        :param sps:
+        :param amount: is quantized amount applied to a note.
+        :return: None. It in place quantization.
+        """
+        self._quantize(sps, amount)
+
 
     @cache
-    def initial_tempo(self):
-        """
+    def initial_tempo(self) -> float:
+        """Initial temp for this seq.
         :return:
         """
         if len(self.tempo_signature) == 0:
-            return DEFAULT_PPQ
+            return float(DEFAULT_PPQ)
 
         for seq_tempo in self.tempo_signature:
-            if seq_tempo.time == 0:
-                return seq_tempo.time
+            if seq_tempo.midi_time == 0:
+                return seq_tempo.midi_time
 
     @cache
-    def truncate_to_last_event(self, offset):
+    def truncate_to_last_event(self, offset: float) -> Optional[float]:
+        """Truncates the sequence so that all notes end before
+        `total_time + offset`.
+
+        :param offset:  The amount of time to add to the total time
+                         of the sequence before truncation. If None, no offset is added
+        :return: The new end time for the sequence after truncation.
+        """
         if offset is None:
             return None
-        return max([n.end_time for n in self._notes] or [0]) + offset
+        return max([n.end_time for n in self.notes] or [0]) + offset
 
     def clone(self):
         """Return a clone of this object """
@@ -552,3 +559,24 @@ class MidiNoteSequence(MidiEvents):
         :return:
         """
         return self.notes
+
+    def _adjust_total_time(self) -> None:
+        """Adjusts the `total_time` property based on the end time of the last note in the sequence.
+        :return:
+        """
+        end_times = [note.end_time for note in self.notes]
+        self.total_time = max(end_times) if end_times else 0.0
+
+    @classmethod
+    def from_notes(cls, notes: List[MidiNote], quantized_step: Optional[float] = None):
+        """
+        Creates a MidiNoteSequence from a list of MidiNote objects.
+
+        :param notes: a list of MidiNote objects
+        :param quantized_step: the quantized step size in seconds (default: None)
+        :return: a MidiNoteSequence object
+        """
+        sequence = cls()
+        sequence.notes = notes
+        sequence._adjust_total_time()
+        return sequence

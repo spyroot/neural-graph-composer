@@ -6,29 +6,34 @@
  related to Midi Key change, Midi Tempo and Midi
  Time signatures.
 
+ TODO
+ For now we do         v.seq = self.key_signatures[-1].seq + 1
+ for seq down the line it will move to more generic method
+ and abstract class
+
 Author Mus
 mbayramo@stanford.edu
 spyroot@gmail.com
 """
-import collections
 import logging
 from functools import cache
-from typing import List, Callable, Any
+from typing import List, Callable, Any, Union
 from typing import Tuple, Iterator, Optional
+import bisect
 
-import collections
-from bisect import bisect, bisect_right
+from bisect import bisect_right
 from functools import cache
 from typing import List, Callable, Any
 from typing import Tuple, Iterator, Optional
 
-import bisect
-from neural_graph_composer.midi.midi_abstract_event import MidiEvent
-from neural_graph_composer.midi.midi_key_signature import MidiKeySignature
-from neural_graph_composer.midi.midi_sequence import MidiNoteSequence
-from neural_graph_composer.midi.midi_spec import DEFAULT_PPQ, DEFAULT_QPM
-from neural_graph_composer.midi.midi_time_signature import MidiTempoSignature
-from neural_graph_composer.midi.midi_time_signature import MidiTimeSignature
+from .midi_abstract_event import MidiEvent
+from .midi_instruments import MidiInstrumentInfo
+from .midi_key_signature import MidiKeySignature
+from .midi_sequence import MidiNoteSequence
+from .midi_spec import DEFAULT_PPQ, DEFAULT_QPM
+from .midi_time_signature import MidiTempoSignature
+from .midi_time_signature import MidiTimeSignature
+from .sorted_dict import SortedDict
 
 
 class MidiNoteSequences:
@@ -37,6 +42,7 @@ class MidiNoteSequences:
             filename: Optional[str] = "",
             resolution: Optional[int] = DEFAULT_PPQ,
             is_debug: Optional[bool] = True,
+            midi_seq: Optional[Union[MidiNoteSequence, List[MidiNoteSequence]]] = None,
             time_signatures: Optional[List[MidiTimeSignature]] = None,
             key_signatures: Optional[List[MidiKeySignature]] = None,
             tempo_signatures: Optional[List[MidiTempoSignature]] = None
@@ -55,8 +61,8 @@ class MidiNoteSequences:
 
         # internal state seq number for each event type.
         self._last_time_midi_seq_num = 0
-        self._last_tempo_midi_seq_num = 0
         self._last_key_midi_seq_num = 0
+        self._last_tempo_midi_seq_num = 0
 
         if tempo_signatures is None:
             tempo_signatures = [MidiTempoSignature(midi_time=0.0)]
@@ -67,7 +73,18 @@ class MidiNoteSequences:
         if time_signatures is None:
             time_signatures = [MidiTimeSignature(midi_time=0.0)]
 
-        self.midi_seqs = None
+        if midi_seq is None:
+            self.midi_seqs = SortedDict()
+        else:
+            self.midi_seqs = SortedDict()
+            if isinstance(midi_seq, MidiNoteSequence):
+                self.midi_seqs[midi_seq.instrument.instrument_num] = midi_seq
+            elif isinstance(midi_seq, list):
+                for seq in midi_seq:
+                    if seq.instrument.instrument_num not in self.midi_seqs:
+                        self.midi_seqs[seq.instrument.instrument_num] = seq
+            else:
+                raise TypeError("midi_seq must be either a MidiNoteSequence or a list of MidiNoteSequence")
 
         # list of time signature changes
         if time_signatures is None:
@@ -89,6 +106,8 @@ class MidiNoteSequences:
         #
         self.resolution = resolution
         # total time for entire seq
+
+        self._instruments = {}
 
         self.total_time: float = 0.0
         #
@@ -120,12 +139,18 @@ class MidiNoteSequences:
             raise ValueError("index must be between 0 and 127 (inclusive)")
 
         if self.midi_seqs is None:
-            self.midi_seqs = collections.OrderedDict()
+            self.midi_seqs = SortedDict()
 
         if idx not in self.midi_seqs:
             self.midi_seqs[idx] = MidiNoteSequence(resolution=self.resolution)
 
         return self.midi_seqs[idx]
+
+    def __len__(self) -> int:
+        """
+        :return:
+        """
+        return len(self.midi_seqs)
 
     def num_instruments(self):
         """Returns number of instruments
@@ -144,7 +169,7 @@ class MidiNoteSequences:
         :raises ValueError: If idx is less than zero or greater valid MIDI instruments.
         """
         if self.midi_seqs is None:
-            self.midi_seqs = collections.OrderedDict()
+            self.midi_seqs = SortedDict()
 
         if idx < 0 or idx >= 128:
             raise ValueError("Invalid instrument id")
@@ -192,7 +217,7 @@ class MidiNoteSequences:
         :return:
         """
         if self.midi_seqs is None:
-            self.midi_seqs = collections.OrderedDict()
+            self.midi_seqs = SortedDict()
 
         if idx in self.midi_seqs:
             return len(self.midi_seqs[idx].notes)
@@ -209,22 +234,18 @@ class MidiNoteSequences:
         :param v: A `MidiTimeSignature` object representing the tempo signature to add.
         :return: None
         """
+
         if self.is_debug:
             logging.debug(f"adding time signature {v}")
-    
+
+        v.seq = self.time_signatures[-1].seq + 1
+
         # replace default
         if len(self.time_signatures) >= 1 and self.is_close_to_zero(
                 self.time_signatures[0].midi_time, v.midi_time):
             self.time_signatures[0] = v
         else:
-            # we track order and if midi time the same we use order that received.
-            if self.time_signatures and v.midi_time > self.time_signatures[-1].midi_time:
-                self._last_time_midi_seq_num += 1
-
-            # bisect.insort_left(self.time_signatures, v, key=lambda k: k.midi_time)
-            bisect.insort_left(
-                self.time_signatures, v, key=lambda k: (k.midi_time, self._last_time_midi_seq_num)
-            )
+            bisect.insort_left(self.time_signatures, v, key=lambda k: k)
 
         self.time_signature.cache_clear()
 
@@ -239,6 +260,8 @@ class MidiNoteSequences:
         if self.is_debug:
             logging.debug(f"adding key signature {v}")
 
+        v.seq = self.key_signatures[-1].seq + 1
+
         # replace default
         if len(self.key_signatures) >= 1 and self.is_close_to_zero(
                 self.key_signatures[0].midi_time, v.midi_time):
@@ -249,7 +272,7 @@ class MidiNoteSequences:
                 self._last_key_midi_seq_num += 1
 
             bisect.insort_left(
-                self.key_signatures, v, key=lambda k: (k.midi_time, self._last_key_midi_seq_num)
+                bisect.insort_left(self.time_signatures, v, key=lambda k: k)
             )
 
         self.key_signature.cache_clear()
@@ -265,15 +288,13 @@ class MidiNoteSequences:
         if self.is_debug:
             logging.debug(f"adding tempo signature {v}")
 
+        v.seq = self.tempo_signatures[-1].seq + 1
+
         if len(self.tempo_signatures) >= 1 and self.is_close_to_zero(
                 self.tempo_signatures[0].midi_time, v.midi_time):
             self.tempo_signatures[0] = v
         else:
-            # we track order and if midi time the same we use order that received.
-            if self.time_signatures and v.midi_time > self.time_signatures[-1].midi_time:
-                self._last_tempo_midi_seq_num += 1
-
-            bisect.insort_left(self.tempo_signatures, v, key=lambda k: (k.midi_time, self._last_tempo_midi_seq_num))
+            bisect.insort_left(self.tempo_signatures, v, key=lambda k: k)
 
         self.tempo_signature.cache_clear()
 
@@ -367,19 +388,19 @@ class MidiNoteSequences:
         for midi_seq in self.midi_seqs:
             midi_seq.trim(initial_time, event_time)
 
-    def truncate_to_last_event(self, offset: Optional[float] = None) -> Optional[float]:
+    def truncate_to_last_event(self, from_start: Optional[float] = None) -> Optional[float]:
         """Truncate the sequence to end at the last event that occurs within the
         specified offset from the start of the sequence. Returns the time of the
         last event that occurs before the truncated end of the sequence.
-        :param offset:
+        :param from_start:
         :return:
         """
-        if offset is not None and offset < 0:
+        if from_start is not None and from_start < 0:
             raise ValueError("offset must be non-negative")
 
         # offset is optional and if not specified,
         # truncate to the last event in the sequence.
-        if offset is None:
+        if from_start is None:
             last_event_time = max([seq_event.event_end_time for seq_event in self.get_all_sequence_events()])
             self.trim(0.0, last_event_time)
             return last_event_time
@@ -388,7 +409,7 @@ class MidiNoteSequences:
         # specified offset from the start of the sequence.
         last_event_time = None
         for seq_event in self.get_all_sequence_events():
-            if seq_event.event_end_time <= offset:
+            if seq_event.event_end_time <= from_start:
                 last_event_time = seq_event.event_end_time
             else:
                 break
@@ -397,6 +418,10 @@ class MidiNoteSequences:
                 midi_seq.trim(0.0, last_event_time)
 
         return last_event_time
+
+    @property
+    def instruments(self) -> List[MidiInstrumentInfo]:
+        return [s.instrument for s in self.midi_seqs.values()]
 
     @staticmethod
     def is_sorted(target_list: list, key: Callable[[Any], float]) -> bool:

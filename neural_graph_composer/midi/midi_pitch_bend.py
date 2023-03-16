@@ -3,7 +3,6 @@ Midi pitch bend event.
 Author Mus spyroot@gmail.com
 """
 from typing import Optional
-
 from .midi_abstract_event import MidiEvent
 
 
@@ -42,10 +41,7 @@ class MidiPitchBend(MidiEvent):
         self.amount: int = min(max(-8191, amount), 8191)
         self.program: int = min(max(0, program), 255)
         self.instrument: int = min(max(0, instrument), 255)
-        if midi_time is not None:
-            self.start_time: float = midi_time
-        if midi_time is not None:
-            self.end_time: float = midi_time
+        self.midi_time = midi_time
         self.is_drum: bool = is_drum
 
     @property

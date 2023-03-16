@@ -122,8 +122,8 @@ class MidiReader:
     def read_instrument(
             midi_seq: MidiNoteSequences,
             midi_data: CustomPrettyMIDI) -> Iterator[Tuple[Instrument, int, pretty_midi.Note]]:
-        """Generator read midi file and returns
-        MIDI program, midi idx midi instrument drum or not,  note
+        """Generator read midi file and returns MIDI program,
+        midi idx midi instrument drum or not,  note
         :param midi_seq:
         :param midi_data:
         :return:
@@ -131,7 +131,6 @@ class MidiReader:
 
         # for i, instrument in enumerate(midi_data.instruments):
         #     yield from ((instrument, i, note) for note in instrument.notes if note.end >= midi_seq[i].total_time)
-
         for i, instrument in enumerate(midi_data.instruments):
             # for each instrument iterate over all node and get time
             for n in instrument.notes:
@@ -140,13 +139,13 @@ class MidiReader:
                     # update entire total for all music instruments
                     if n.end >= midi_seq.total_time:
                         midi_seq.total_time = n.end
-
-                    # update for particular instrument
+                    # update for particular instrument total time
                     midi_seq[i].total_time = n.end
                     yield instrument, i, n
                 else:
-                    logging.debug("Skipping instrument %s: note %s end time is before instrument end time %s",
-                                  instrument, n, midi_seq.total_time)
+                    logging.debug(
+                        f"Skipping instrument {instrument}: "
+                        f"note {n} end time after instrument time {midi_seq.total_time}")
                     logging.warning(
                         "instrument {} note pitch {} interval {}-{} vel {} "
                         "skipped".format(instrument, n.pitch, n.start, n.end, n.velocity))
@@ -185,16 +184,17 @@ class MidiReader:
                     yield instrument, i, cv
 
     @staticmethod
-    def midi_to_tensor(seq_file, is_debug: Optional[bool] = True) -> MidiNoteSequences:
-        """Method take mido file or path to a file and
-          converts to internal representation.
-          MidiNoteSequence
+    def read(seq_file, is_debug: Optional[bool] = True) -> MidiNoteSequences:
+        """Main midi reader, take mido file or path to a file and
+          converts to internal representation MidiNoteSequences
+
+        Each MidiNoteSequences container separate
+        MidiNoteSequence for each instrument.
 
         :param is_debug:
         :param seq_file:  mido.MidiFile or string to a file.
         :return:
         """
-
         if not isinstance(seq_file, str) and not isinstance(seq_file, bytes):
             if not isinstance(seq_file, MidiFile):
                 raise ValueError(f"Illegal argument. input seq must be instance of "
@@ -215,13 +215,11 @@ class MidiReader:
 
         print(f"Self len of key signature {len(midi_seqs.key_signatures)}")
         print(f"Self len of key signature {len(midi_seqs.time_signatures)}")
-        print(f"Self len of key signature {len(midi_seqs.tempo_signature)}")
+        print(f"Self len of key signature {len(midi_seqs.tempo_signatures)}")
 
         print(f"key key {midi_seqs.key_signatures}")
-        print(f"key temo {midi_seqs.tempo_signature}")
+        print(f"key temo {midi_seqs.tempo_signatures}")
         print(f"key temo {midi_seqs.time_signatures}")
-
-        raise midi_data.ticks_per_quarter
 
         midi_seqs.filename = seq_file
         midi_seqs.resolution = midi_data.resolution
@@ -235,8 +233,8 @@ class MidiReader:
                 instrument_idx,
                 name=instrument.name,
                 is_drum=instrument.is_drum)
-            print(f"midi_seq new instrument {midi_seq.instrument.instrument_num}")
 
+            num, denom = midi_seqs.time_signature(note.start)
             midi_seq.add_note(
                 MidiNote(
                     note.pitch,
@@ -246,8 +244,8 @@ class MidiReader:
                     instrument=instrument_idx,
                     velocity=note.velocity,
                     is_drum=instrument.is_drum,
-                    numerator=midi_seqs.get_numerator(note.start),
-                    denominator=midi_seq.get_denominator(note.start),
+                    numerator=num,
+                    denominator=denom,
                 )
             )
 
@@ -256,8 +254,8 @@ class MidiReader:
             midi_seq.add_pitch_bends(
                 MidiPitchBend(
                     b.pitch,
-                    b.time,
-                    program=instrument_idx.numerator,
+                    midi_time=b.time,
+                    program=instrument.program,
                     instrument=instrument_idx,
                     is_drum=instrument.is_drum
                 )
@@ -269,20 +267,27 @@ class MidiReader:
                 MidiControlChange(
                     cv.number,
                     cv.value,
-                    cv.time,
+                    cc_time=cv.time,
                     program=instrument.program,
                     instrument=instrument_idx,
                     is_drum=instrument.is_drum,
                 )
-         )
+            )
 
         return midi_seqs
 
     @staticmethod
-    def tensor_to_pretty_midi(sequence: MidiNoteSequences, offset=None):
-
+    def write(sequence: MidiNoteSequences,
+              from_start: Optional[float] = None,
+              to_end: Optional[float] = None):
+        """
+        :param sequence:
+        :param from_start: By default, we write from the start til the end.
+        :param to_end:  Till the last midi event.
+        :return:
+        """
         ticks_per_quarter = sequence.resolution or DEFAULT_PPQ
-        max_event_time = sequence.truncate_to_last_event(offset)
+        max_event_time = sequence.truncate_to_last_event(to_end)
         initial_seq_tempo = sequence.initial_tempo()
 
         pm = CustomPrettyMIDI(
@@ -291,8 +296,6 @@ class MidiReader:
 
         instrument = pretty_midi.Instrument(0)
         pm.instruments.append(instrument)
-
-        # populate time signatures.
         for ts in sequence.slice_time_signatures(max_event_time):
             pm.time_signature_changes.append(
                 pretty_midi.TimeSignature(
@@ -313,67 +316,29 @@ class MidiReader:
         # populate tempos.
         for seq_tempo in sequence.slice_tempo_signature(max_event_time):
             tick_scale = 60.0 / (pm.resolution * seq_tempo.qpm)
-            tick = pm.time_to_tick(seq_tempo.time)
+            tick = pm.time_to_tick(seq_tempo.midi_time)
             pm.update_scale((tick, tick_scale))
             pm.update_tick_to_time(0)
-            # pm._tick_scales.append((tick, tick_scale))
-            # pm._update_tick_to_time(0)
 
         # populate instrument names by first creating an instrument map between
         # instrument index and name.
         # Then, going over this map in the instrument event for loop
         inst_infos = {}
-        for inst_info in sequence.instrument:
+        for i, inst_info in enumerate(sequence.instruments):
             inst_infos[inst_info.instrument_num] = inst_info.name
 
-        # Populate instrument events by first gathering notes and other event types
-        # in lists then write them sorted to the PrettyMidi object.
-        instrument_events = collections.defaultdict(
-            lambda: collections.defaultdict(list))
+        for seq in sequence:
+            notes = [pretty_midi.Note(n.velocity, n.pitch, n.start_time, n.end_time) for n in seq.notes]
+            pitch_bends = [pretty_midi.PitchBend(sb.amount, sb.midi_time) for sb in seq.pitch_bends
+                           if max_event_time and sb.midi_time < max_event_time]
+            control_changes = [pretty_midi.ControlChange(cc.cc_number, cc.cc_value, cc.cc_time)
+                               for cc in seq.control_changes
+                               if max_event_time and cc.cc_time < max_event_time]
 
-        for seq_note in sequence.notes:
-            instrument_events[(seq_note.instrument_num, seq_note.program,
-                               seq_note.is_drum)]['notes'].append(
-                pretty_midi.Note(
-                    seq_note.velocity, seq_note.pitch,
-                    seq_note.start_time, seq_note.end_time))
-
-        for sb in sequence.pitch_bends:
-            if max_event_time and sb.time > max_event_time:
-                continue
-
-            instrument_events[
-                (sb.instrument_num, sb.program, sb.is_drum)
-            ]['bends'].append(pretty_midi.PitchBend(sb.bend, sb.time))
-
-        for seq_cc in sequence.control_changes:
-            if max_event_time and seq_cc.time > max_event_time:
-                continue
-
-            instrument_events[
-                (seq_cc.instrument_num, seq_cc.program, seq_cc.is_drum)]['controls'].append(
-                pretty_midi.ControlChange(
-                    seq_cc.control_number,
-                    seq_cc.control_value, seq_cc.time))
-
-        for (instr_id, pid, is_drum) in sorted(instrument_events.keys()):
-
-            if instr_id > 0:
-                instrument = pretty_midi.Instrument(pid, is_drum)
-                pm.instruments.append(instrument)
-            else:
-                instrument.is_drum = is_drum
-
-            # propagate instrument name to the midi file
-            instrument.program = pid
-            if instr_id in inst_infos:
-                instrument.name = inst_infos[instr_id]
-
-            instrument.notes = instrument_events[
-                (instr_id, pid, is_drum)]['notes']
-            instrument.pitch_bends = instrument_events[
-                (instr_id, pid, is_drum)]['bends']
-            instrument.control_changes = instrument_events[
-                (instr_id, pid, is_drum)]['controls']
+            instrument = pretty_midi.Instrument(seq.program, seq.instrument.is_drum)
+            instrument.notes = notes
+            instrument.pitch_bends = pitch_bends
+            instrument.control_changes = control_changes
+            pm.instruments.append(instrument)
 
         return
