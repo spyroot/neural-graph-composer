@@ -1,14 +1,14 @@
 """
-Midi cc message
-
-This control msg Midi meta data.
-For know unused.
+Midi meta-data information.
+For now we skip this
 
 Author Mus spyroot@gmail.com
 """
 
 
 class SequenceMetadata:
+    """Information from MIDI.
+    """
     artist: str
     title: str
     genre: []

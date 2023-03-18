@@ -1,8 +1,7 @@
 """
 Abstract Midi Event and MidiEvents.
-MidiEvents indicate that object implemented
-get_midi_events so caller can get all midi events
-for pitch or pitch bend etc.
+MidiEvents indicate that object implemented get_midi_events
+so caller can get all midi events for pitch or pitch bend etc.
 
 Whereas MidiEvent it just event that has
 two property that caller can use.

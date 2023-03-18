@@ -152,6 +152,22 @@ class MidiNoteSequences:
         """
         return len(self.midi_seqs)
 
+    def __iter__(self):
+        """Return an iterator over the keys sorted in ascending order."""
+        return iter(self.midi_seqs.keys())
+
+    def __repr__(self):
+        """
+        :return:
+        """
+        return 'MidiNoteSequences(' + ', '.join([str(self.midi_seqs[k]) for k in self.midi_seqs]) + ')'
+
+    def __str__(self):
+        """
+        :return:
+        """
+        return 'MidiNoteSequences(' + ', '.join([str(self.midi_seqs[k]) for k in self.midi_seqs]) + ')'
+
     def num_instruments(self):
         """Returns number of instruments
         :return:
@@ -198,18 +214,6 @@ class MidiNoteSequences:
                 return seq_tempo.qpm
 
         return self.tempo_signatures[0].qpm
-
-    def __repr__(self):
-        """
-        :return:
-        """
-        return 'MidiNoteSequences(' + ', '.join([str(self.midi_seqs[k]) for k in self.midi_seqs]) + ')'
-
-    def __str__(self):
-        """
-        :return:
-        """
-        return 'MidiNoteSequences(' + ', '.join([str(self.midi_seqs[k]) for k in self.midi_seqs]) + ')'
 
     def instrument_midi_seq_len(self, idx: int) -> int:
         """Return the number of MIDI notes in the MIDI sequence for the given instrument.
@@ -373,7 +377,7 @@ class MidiNoteSequences:
         """
         all_events = []
         for seq in self.midi_seqs:
-            all_events.extend(seq.get_midi_events())
+            all_events.extend(self.midi_seqs[seq].get_midi_events())
 
         all_events.sort(key=lambda x: x.start_time)
         return all_events
@@ -385,8 +389,8 @@ class MidiNoteSequences:
         :param event_time:
         :return:
         """
-        for midi_seq in self.midi_seqs:
-            midi_seq.trim(initial_time, event_time)
+        for k in self.midi_seqs:
+            self.midi_seqs[k].slice(initial_time, event_time)
 
     def truncate_to_last_event(self, from_start: Optional[float] = None) -> Optional[float]:
         """Truncate the sequence to end at the last event that occurs within the

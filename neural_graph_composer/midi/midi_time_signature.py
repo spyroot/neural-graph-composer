@@ -21,17 +21,39 @@ class MidiTempoSignature(MidiSeq):
 
     def __init__(self,
                  midi_time: Optional[float] = 0.0,
-                 qpm: Optional[int] = DEFAULT_QPM,
-                 resolution: Optional[int] = DEFAULT_PPQ) -> None:
+                 qpm: Optional[float] = float(DEFAULT_QPM),
+                 resolution: Optional[int] = int(DEFAULT_PPQ)) -> None:
         """
         :param midi_time: The time at which the tempo signature takes effect, in ticks.
         :param qpm: The tempo, in quarter notes per minute.
         :param resolution: The ticks per quarter note of the MIDI sequence
         """
         super().__init__()
-        self.midi_time = midi_time
-        self.resolution = resolution
-        self.qpm = qpm
+
+        print(f"Create MidiTempoSignature change {type(qpm)} n_times "
+              f"{type(midi_time)} resolution {type(resolution)}")
+
+        if qpm is not None:
+            assert isinstance(qpm, (int, float)), f"qpm must be a number, got {type(qpm)}"
+            assert qpm > 0, f"qpm must be greater than 0, got {qpm}"
+            self.qpm = float(qpm)
+        else:
+            self.qpm = DEFAULT_QPM
+
+        if resolution is not None:
+            assert isinstance(resolution, int), f"resolution must be an integer, got {type(resolution)}"
+            assert resolution > 0, f"resolution must be greater than 0, got {resolution}"
+            self.resolution = int(resolution)
+        else:
+            self.resolution = DEFAULT_PPQ
+
+        if midi_time is not None:
+            assert isinstance(midi_time, (int, float)), f"midi_time must be a number, got {type(midi_time)}"
+            self.midi_time = float(midi_time)
+        else:
+            self.midi_time = 0.0
+
+        print(f"Create MidiTempoSignature change {type(self.qpm)} n_times {midi_time} resolution {self.resolution}")
 
     @staticmethod
     def tempo_to_qpm(tempo: float) -> float:
@@ -44,18 +66,17 @@ class MidiTempoSignature(MidiSeq):
         return 60.0 / (tempo / 1000000.0)
 
     @property
-    def qpm(self) -> Optional[int]:
+    def qpm(self) -> Optional[float]:
         """Return the tempo in quarter notes per minute (QPM).
         """
         return self._qpm
 
     @qpm.setter
-    def qpm(self, value: int) -> None:
+    def qpm(self, value: float) -> None:
         """Set the tempo in quarter notes per minute (QPM).
         """
         self._qpm = value
 
-    @property
     @cache
     def average_qpm(self, total_time, tempo_signature):
         """Compute the quarter notes per minute (QPM) based on the tempo signature

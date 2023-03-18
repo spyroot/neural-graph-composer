@@ -1,4 +1,16 @@
+"""
+This class represent interval that mainly used for Sorted Dict.
+The idea sort all MIDI information in sorted order where each
+MIDI event can overlap.   So we can find the right order
+in O(1) time.
+
+Again it on going work.
+
+Author Mus spyroot@gmail.com
+"""
+
 from dataclasses import dataclass
+
 
 @dataclass(frozen=True)
 class Interval:

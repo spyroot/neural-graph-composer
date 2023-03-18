@@ -79,6 +79,17 @@ class MidiNoteSequence(MidiEvents):
         :param drum_events: a list of drum events represented as MidiNote objects
         :param is_debug: whether to print debug messages or not
         """
+        if notes is not None and not isinstance(notes, List):
+            raise ValueError(f"Notes must be a list of MidiNote objects, received {type(notes)}")
+        if drum_events is not None and not isinstance(drum_events, List):
+            raise ValueError("Drum events must be a list of MidiNote objects.")
+        if instrument is not None and not isinstance(instrument, MidiInstrumentInfo):
+            raise ValueError("Instrument must be a MidiInstrumentInfo object.")
+        if resolution is not None and not isinstance(resolution, int):
+            raise ValueError("Resolution must be an integer.")
+        if is_debug is not None and not isinstance(is_debug, bool):
+            raise ValueError("is_debug must be a boolean value.")
+
         # midi instrument information
         if instrument is None:
             self.instrument = MidiInstrumentInfo(0, "Generic")
@@ -96,7 +107,6 @@ class MidiNoteSequence(MidiEvents):
         self.pitch_bends: List[MidiPitchBend] = []
 
         self.program = 0
-
         # 240 ticks per 16th note.
         # 480 ticks per 8th note
         # 960 ticks per quarter note
