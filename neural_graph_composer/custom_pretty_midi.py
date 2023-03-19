@@ -9,7 +9,7 @@ import collections
 import copy
 import math
 import warnings
-from typing import Optional
+from typing import Optional, List, Tuple
 
 import mido
 import numpy as np
@@ -32,6 +32,7 @@ class CustomPrettyMIDI(pretty_midi.PrettyMIDI):
     This custom Pretty Midi implementation.  It has number of fixes
 
     """
+
     def __init__(self,
                  midi_file=None,
                  resolution: Optional[int] = 220,
@@ -48,60 +49,15 @@ class CustomPrettyMIDI(pretty_midi.PrettyMIDI):
         self.is_debug = is_debug
 
         if midi_file is not None:
-            print(f"Loading midi from a file {midi_file}")
-            # Load in the MIDI data using the midi module
-            if isinstance(midi_file, mido.MidiFile):
-                midi_data = midi_file
-            elif isinstance(midi_file, six.string_types):
-                # If a string was given, pass it as the string filename
-                midi_data = mido.MidiFile(filename=midi_file)
-            else:
-                # Otherwise, try passing it in as a file pointer
-                midi_data = mido.MidiFile(file=midi_file)
-
-            # Convert tick values in midi_data to absolute, a useful thing.
-            for track in midi_data.tracks:
-                tick = 0
-                for event in track:
-                    event.time += tick
-                    tick = event.time
-
-            self.resolution = midi_data.ticks_per_beat
-            self._load_tempo_changes(midi_data)
-
-            # Update the array which maps ticks to time
-            max_tick = max([max([e.time for e in t])
-                            for t in midi_data.tracks]) + 1
-
-            # If max_tick is huge, the MIDI file is probably corrupt
-            # and creating the __tick_to_time array will thrash memory
-            if max_tick > MAX_TICK:
-                raise ValueError(('MIDI file has a largest tick of {},'
-                                  ' it is likely corrupt'.format(max_tick)))
-
-            # Create list that maps ticks to time in seconds
-            self._update_tick_to_time(max_tick)
-
-            # Populate the list of key and time signature changes
-            self._load_metadata(midi_data)
-
-            # Check that there are tempo, key and time change events
-            if any(e.type in ('set_tempo', 'key_signature', 'time_signature')
-                   for track in midi_data.tracks[1:] for e in track):
-                warnings.warn(
-                    "Tempo, Key or Time signature change events found on "
-                    "non-zero tracks.  This is not a valid type 0 or type 1 "
-                    "MIDI file.  Tempo, Key or Time Signature may be wrong.",
-                    RuntimeWarning)
-
+            self.from_file(midi_file)
             # Populate the list of instruments
-            self._load_instruments(midi_data)
         else:
             self.resolution = resolution
             # Compute the tick scale for the provided initial tempo
             # and let the tick scale start from 0
             self._tick_scales = [(0, 60.0 / (initial_tempo * self.resolution))]
             # Only need to convert one tick to time
+            # self.tick_times([0])
             self.__tick_to_time = [0]
             # Empty instruments list
             self.instruments = []
@@ -112,11 +68,77 @@ class CustomPrettyMIDI(pretty_midi.PrettyMIDI):
             # Empty lyrics list
             self.lyrics = []
 
+            print(f"Done constructing tick scales "
+                  f"{initial_tempo} {resolution} {self._tick_scales} len {self.__tick_to_time}")
+
+    def from_file(self, midi_file):
+        """
+        :param midi_file:
+        :return:
+        """
+        print(f"Loading midi from a file {midi_file}")
+        # Load in the MIDI data using the midi module
+        if isinstance(midi_file, mido.MidiFile):
+            midi_data = midi_file
+        elif isinstance(midi_file, six.string_types):
+            # If a string was given, pass it as the string filename
+            midi_data = mido.MidiFile(filename=midi_file)
+        else:
+            # Otherwise, try passing it in as a file pointer
+            midi_data = mido.MidiFile(file=midi_file)
+
+        # Convert tick values in midi_data to absolute, a useful thing.
+        for track in midi_data.tracks:
+            tick = 0
+            for event in track:
+                event.time += tick
+                tick = event.time
+
+        self.resolution = midi_data.ticks_per_beat
+        print(f"mido resolution {self.resolution}")
+        self._load_tempo_changes(midi_data)
+
+        # Update the array which maps ticks to time
+        max_tick = max([max([e.time for e in t])
+                        for t in midi_data.tracks]) + 1
+
+        # If max_tick is huge, the MIDI file is probably corrupt
+        # and creating the __tick_to_time array will thrash memory
+        if max_tick > MAX_TICK:
+            raise ValueError(('MIDI file has a largest tick of {},'
+                              ' it is likely corrupt'.format(max_tick)))
+
+        # Create list that maps ticks to time in seconds
+        self._update_tick_to_time(max_tick)
+
+        # Populate the list of key and time signature changes
+        self._load_metadata(midi_data)
+
+        # Check that there are tempo, key and time change events
+        if any(e.type in ('set_tempo', 'key_signature', 'time_signature')
+               for track in midi_data.tracks[1:] for e in track):
+            warnings.warn(
+                "Tempo, Key or Time signature change events found on "
+                "non-zero tracks.  This is not a valid type 0 or type 1 "
+                "MIDI file.  Tempo, Key or Time Signature may be wrong.",
+                RuntimeWarning)
+
+        # Populate the list of instruments
+        self._load_instruments(midi_data)
+
+    @property
+    def tick_times(self) -> List[int]:
+        return self.__tick_to_time
+
+    @tick_times.setter
+    def tick_times(self, new_tick_to_time: List[int]):
+        self.update_tick_time(new_tick_to_time)
+
+    def update_tick_time(self, new_tick_to_time: List[int]):
+        self.__tick_to_time = new_tick_to_time
+
     def update_scale(self, new_scale):
         self._tick_scales.append(new_scale)
-
-    def update_tick_to_time(self, new_tick_to_time):
-        self.__tick_to_time = new_tick_to_time
 
     def _load_tempo_changes(self, midi_data: MidiFile):
         """Populates ``self._tick_scales`` with tuples of
@@ -152,6 +174,31 @@ class CustomPrettyMIDI(pretty_midi.PrettyMIDI):
                     if tick_scale != last_tick_scale:
                         self._tick_scales.append((event.time, tick_scale))
 
+    def _load_tempo_changes2(self, midi_data: MidiFile):
+        """Populates ``self._tick_scales`` with tuples of
+        ``(tick, tick_scale)`` loaded from ``midi_data``.
+        Parameters
+        ----------
+        midi_data : midi.FileReader
+            MIDI object from which data will be read.
+        """
+
+        self._tick_scales = [(0, 60.0 / (120.0 * self.resolution))]
+        tick_scales = [(event.time, 60.0 / ((6e7 / event.tempo) * self.resolution))
+                       for event in midi_data.tracks[0] if event.type == 'set_tempo']
+
+        if len(tick_scales) > 0 and tick_scales[0][0] == 0:
+            bpm = 6e7 / midi_data.tracks[0][0].tempo
+            self._tick_scales = [(0, 60.0 / (bpm * self.resolution))]
+            tick_scales = tick_scales[1:]
+
+        # Ignore repetition of BPM, which happens often
+        last_tick_scale = self._tick_scales[-1][1]
+        tick_scales = [(tick, ts) for tick, ts in tick_scales if ts != last_tick_scale]
+
+        # Merge tick scales with self._tick_scales
+        self._tick_scales.extend(tick_scales)
+
     def _load_metadata(self, midi_data):
         """Populates ``self.time_signature_changes`` with ``TimeSignature``
         objects, ``self.key_signature_changes`` with ``KeySignature`` objects,
@@ -171,7 +218,7 @@ class CustomPrettyMIDI(pretty_midi.PrettyMIDI):
             if event.type == 'key_signature':
                 key_obj = KeySignature(
                     key_name_to_key_number(event.key),
-                    self.__tick_to_time[event.time])
+                    self.tick_to_time[event.time])
 
                 self.key_signature_changes.append(key_obj)
             # time_signature
@@ -179,15 +226,15 @@ class CustomPrettyMIDI(pretty_midi.PrettyMIDI):
                 ts_obj = TimeSignature(
                     event.numerator,
                     event.denominator,
-                    self.__tick_to_time[event.time]
+                    self.tick_times[event.time]
                 )
                 self.time_signature_changes.append(ts_obj)
             # lyrics
             elif event.type == 'lyrics':
                 self.lyrics.append(Lyric(
-                    event.text, self.__tick_to_time[event.time]))
+                    event.text, self.tick_times[event.time]))
 
-    def _update_tick_to_time(self, max_tick):
+    def _update_tick_to_time(self, max_tick: int):
         """Creates ``self.__tick_to_time``, a class member array which maps
         ticks to time starting from tick 0 and ending at ``max_tick``.
         Parameters
@@ -201,7 +248,7 @@ class CustomPrettyMIDI(pretty_midi.PrettyMIDI):
         max_scale_tick = max(ts[0] for ts in self._tick_scales)
         max_tick = max_tick if max_tick > max_scale_tick else max_scale_tick
         # Allocate tick to time array - indexed by tick from 0 to max_tick
-        self.__tick_to_time = np.zeros(max_tick + 1)
+        self.tick_times = np.zeros(max_tick + 1)
         # Keep track of the end time of the last tick in the previous interval
         last_end_time = 0
         # Cycle through intervals of different tempi
@@ -209,16 +256,14 @@ class CustomPrettyMIDI(pretty_midi.PrettyMIDI):
                 zip(self._tick_scales[:-1], self._tick_scales[1:]):
             # Convert ticks in this interval to times
             ticks = np.arange(end_tick - start_tick + 1)
-            self.__tick_to_time[start_tick:end_tick + 1] = (last_end_time +
-                                                            tick_scale * ticks)
+            self.tick_times[start_tick:end_tick + 1] = (last_end_time + tick_scale * ticks)
             # Update the time of the last tick in this interval
-            last_end_time = self.__tick_to_time[end_tick]
+            last_end_time = self.tick_times[end_tick]
         # For the final interval, use the final tempo setting
         # and ticks from the final tempo setting until max_tick
         start_tick, tick_scale = self._tick_scales[-1]
         ticks = np.arange(max_tick + 1 - start_tick)
-        self.__tick_to_time[start_tick:] = (last_end_time +
-                                            tick_scale * ticks)
+        self.tick_times[start_tick:] = (last_end_time + tick_scale * ticks)
 
     def _finish_notes(
             self, event, last_note_on, __get_instrument, current_instrument, track_idx, end_of_seq=False):
@@ -231,8 +276,8 @@ class CustomPrettyMIDI(pretty_midi.PrettyMIDI):
             _channel, _note = k
             if end_tick > start_tick or end_of_seq:
                 # start we know, end is current note on event
-                start_time = self.__tick_to_time[start_tick]
-                end_time = self.__tick_to_time[end_tick]
+                start_time = self.tick_times[start_tick]
+                end_time = self.tick_times[end_tick]
                 note = Note(velocity, _note, start_time, end_time)
                 program = current_instrument[_channel]
                 ints = __get_instrument(program, _channel, track_idx, 1)
@@ -271,8 +316,8 @@ class CustomPrettyMIDI(pretty_midi.PrettyMIDI):
             if start_tick == end_tick]
 
         for start_tick, velocity in notes_to_close:
-            start_time = self.__tick_to_time[start_tick]
-            end_time = self.__tick_to_time[end_tick]
+            start_time = self.tick_times[start_tick]
+            end_time = self.tick_times[end_tick]
             # Create the note event
             note = Note(velocity, event.note, start_time, end_time)
             # Get the program and drum type for the current
@@ -388,7 +433,7 @@ class CustomPrettyMIDI(pretty_midi.PrettyMIDI):
                 # Store pitch bends
                 elif event.type == 'pitchwheel':
                     # Create pitch bend class instance
-                    bend = PitchBend(event.pitch, self.__tick_to_time[event.time])
+                    bend = PitchBend(event.pitch, self.tick_times[event.time])
                     # Get the program for the current inst
                     program = current_instrument[event.channel]
                     # Retrieve the Instrument instance for the current inst
@@ -400,7 +445,7 @@ class CustomPrettyMIDI(pretty_midi.PrettyMIDI):
                 elif event.type == 'control_change':
                     control_change = ControlChange(
                         event.control, event.value,
-                        self.__tick_to_time[event.time])
+                        self.tick_times[event.time])
                     # Get the program for the current inst
                     program = current_instrument[event.channel]
                     # Retrieve the Instrument instance for the current inst
@@ -419,7 +464,7 @@ class CustomPrettyMIDI(pretty_midi.PrettyMIDI):
         # Initialize list of instruments from instrument_map
         self.instruments = [i for i in instrument_map.values()]
 
-    def get_tempo_changes(self):
+    def get_tempo_changes(self) -> Tuple[np.ndarray, np.ndarray]:
         """Return arrays of tempo changes in quarter notes-per-minute and their
         times.
         Returns
@@ -559,8 +604,8 @@ class CustomPrettyMIDI(pretty_midi.PrettyMIDI):
             ts_idx += 1
 
         def get_current_bpm():
-            ''' Convenience function which computs the current BPM based on the
-            current tempo change and time signature events '''
+            """ Convenience function which computs the current BPM based on the
+            current tempo change and time signature events """
             # When there are time signature changes, use them to compute BPM
             if self.time_signature_changes:
                 return qpm_to_bpm(
@@ -968,15 +1013,15 @@ class CustomPrettyMIDI(pretty_midi.PrettyMIDI):
         if tick >= MAX_TICK:
             raise IndexError('Supplied tick is too large.')
         # If we haven't compute the mapping for a tick this large, compute it
-        if tick >= len(self.__tick_to_time):
+        if tick >= len(self.tick_times):
             self._update_tick_to_time(tick)
         # Ticks should be integers
         if not isinstance(tick, int):
-            warnings.warn('tick should be an int.')
+            warnings.warn(f"tick should be an int, type {type(tick)}")
         # Otherwise just return the time
-        return self.__tick_to_time[int(tick)]
+        return self.tick_times[int(tick)]
 
-    def time_to_tick(self, time):
+    def time_to_tick(self, time: float) -> int:
         """Converts from a time in seconds to absolute tick using
         ``self._tick_scales``.
         Parameters
@@ -989,25 +1034,25 @@ class CustomPrettyMIDI(pretty_midi.PrettyMIDI):
             Absolute tick corresponding to the supplied time.
         """
         # Find the index of the ticktime which is smaller than time
-        tick = np.searchsorted(self.__tick_to_time, time, side="left")
+        tick = np.searchsorted(self.tick_times, time, side="left")
         # If the closest tick was the final tick in self.__tick_to_time...
-        if tick == len(self.__tick_to_time):
+        if tick == len(self.tick_times):
             # start from time at end of __tick_to_time
             tick -= 1
             # Add on ticks assuming the final tick_scale amount
             _, final_tick_scale = self._tick_scales[-1]
-            tick += (time - self.__tick_to_time[tick]) / final_tick_scale
+            tick += (time - self.tick_times[tick]) / final_tick_scale
             # Re-round/quantize
             return int(round(tick))
-        # If the tick is not 0 and the previous ticktime in a is closer to time
-        if tick and (math.fabs(time - self.__tick_to_time[tick - 1]) <
-                     math.fabs(time - self.__tick_to_time[tick])):
+        # If the tick is not 0 and the previous ticktime in an is closer to time
+        if tick and (math.fabs(time - self.tick_times[tick - 1]) <
+                     math.fabs(time - self.tick_times[tick])):
             # Decrement index by 1
-            return tick - 1
+            return int(tick - 1)
         else:
-            return tick
+            return int(tick)
 
-    def adjust_times(self, original_times, new_times):
+    def adjust_times(self, original_times: np.ndarray, new_times: np.ndarray):
         """Adjusts the timing of the events in the MIDI object.
         The parameters ``original_times`` and ``new_times`` define a mapping,
         so that if an event originally occurs at time ``original_times[n]``, it
@@ -1087,7 +1132,7 @@ class CustomPrettyMIDI(pretty_midi.PrettyMIDI):
                 # Otherwise only keep events within the new set of times
                 valid_events.extend(
                     event for event in event_getter(_instrument)
-                    if event.time > new_times[0] and event.time < new_times[-1])
+                    if new_times[0] < event.time < new_times[-1])
                 event_getter(_instrument)[:] = valid_events
 
         # Correct pitch bends and control changes
@@ -1114,7 +1159,7 @@ class CustomPrettyMIDI(pretty_midi.PrettyMIDI):
             # Otherwise only keep event within the new set of times
             valid_events.extend(
                 event for event in events
-                if event.time > new_times[0] and event.time < new_times[-1])
+                if new_times[0] < event.time < new_times[-1])
             events[:] = valid_events
 
         # Adjust key signature change event times
@@ -1157,7 +1202,7 @@ class CustomPrettyMIDI(pretty_midi.PrettyMIDI):
         # wandering mapping.  This may not be the optimal way of doing this,
         # but it does the right thing.
         self._update_tick_to_time(self.time_to_tick(original_times[-1]))
-        original_times = [self.__tick_to_time[self.time_to_tick(time)]
+        original_times = [self.tick_times[self.time_to_tick(time)]
                           for time in original_times]
         # Use spacing between timing to change tempo changes
         tempo_change_times, tempo_changes = self.get_tempo_changes()
@@ -1186,8 +1231,7 @@ class CustomPrettyMIDI(pretty_midi.PrettyMIDI):
             new_tempo_changes.append(tempo_changes[tempo_idx] * speed_scale)
             # Also add and scale all tempi within the range of this scaled zone
             while (tempo_idx + 1 < len(tempo_changes) and
-                   start_time <= tempo_change_times[tempo_idx + 1] and
-                   end_time > tempo_change_times[tempo_idx + 1]):
+                   start_time <= tempo_change_times[tempo_idx + 1] < end_time):
                 tempo_idx += 1
                 new_tempo_change_times.append(tempo_change_times[tempo_idx])
                 new_tempo_changes.append(tempo_changes[tempo_idx] * speed_scale)

@@ -202,19 +202,14 @@ class Interval(Enum):
         """
         value = self.value % 12
         if self == Interval.P1 or self == Interval.P8:
-            print("Case one")
             return (self.value, )
         elif value in (1, 4, 5, 8, 11):
-            print("Case 2")
             return (Interval.M2.value, self.value - Interval.M2.value)
         elif value in (2, 3, 6, 7, 9, 10):
-            print("Case 3")
             return Interval.M2.value, Interval.M3.value, self.value - Interval.M2.value - Interval.M3.value
         elif value == 0:
-            print("Case 4")
             return tuple(0, 0)
         elif value == 11:
-            print("Case 5")
             return Interval.M2.value, self.value - Interval.M2.value
 
 

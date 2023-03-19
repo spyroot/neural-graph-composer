@@ -12,10 +12,28 @@ from torch import tensor
 
 from neural_graph_composer.midi.midi_note import MidiNote
 from neural_graph_composer.midi.midi_sequence import MidiNoteSequence
-from neural_graph_composer.midi_graph_builder import construct_graph_from_seq, get_edge_connected, from_midi_networkx
+from neural_graph_composer.midi_graph_builder import MidiGraphBuilder
 
 
 class Test(TestCase):
+    def test_simple_case(self):
+        """
+
+        :return:
+        """
+        #  pitch A follow pitch B follow pitch B
+        a = MidiNote(pitch=21, start_time=0, end_time=0.5)
+        b = MidiNote(pitch=23, start_time=1.0, end_time=2.0)
+        b2 = MidiNote(pitch=23, start_time=2.0, end_time=3.0)
+
+        expect = [a, b, b2]
+        midi_seq = MidiNoteSequence(notes=expect)
+        self.assertTrue(midi_seq.total_time == 3.0)
+        self.assertTrue(len(midi_seq.notes) == len(expect))
+        self.assertListEqual(midi_seq.notes, expect)
+
+        midi_graph_builder = MidiGraphBuilder(midi_seq)
+
     def test_update_abbb(self):
         """Add a check neigh
         :return:

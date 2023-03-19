@@ -69,8 +69,13 @@ class MidiKeySignature(MidiSeq):
         :param other:
         :return:
         """
-        # print(f"__lt__ other {other.seq} mine {self.seq}")
         if math.isclose(self.midi_time, other.midi_time):
             return self.seq < other.seq
 
         return self.midi_time < other.midi_time
+
+    def __str__(self):
+        return f"MidiKeySignature(time={self.midi_time}, key={self.midi_key}, mode={self.mode.name})"
+
+    def __repr__(self):
+        return self.__str__()

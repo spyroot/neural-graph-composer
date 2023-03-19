@@ -73,6 +73,7 @@ class MidiNote(MidiEvent):
     represent events as interval tree.
 
     """
+
     def __init__(self,
                  pitch: int,
                  start_time: float,
@@ -324,12 +325,13 @@ class MidiNote(MidiEvent):
     @staticmethod
     def quantize_to_nearest_step(midi_time: float, sps: int,
                                  amount: Optional[float] = 0.5,
-                                 is_floor: Optional=True) -> float:
+                                 is_floor: Optional = True) -> float:
         """Quantize the given midi_time given in float second
         return step number as integer value
 
         The nearest compute step based on steps per second
 
+        :param is_floor:
         :param midi_time The time in seconds that we use to find the nearest step.
         :param sps: the number of steps per second.
         :param amount is optional parameter is used to adjust the
@@ -337,13 +339,9 @@ class MidiNote(MidiEvent):
                       it means that the quantization step size is of the original
                       step size So if the original step size is 1 second per step,
                       then with amount=0.5, the quantization step size
-                     becomes 0.5 seconds per step.
+                     becomes 0.5 seconds per step
         :raise ValueError if sps is less than 0 or amount is less than 0
         """
-        # print(f"midi time {midi_time} {sps} {amount}")
-        # step_duration = 1.0 / sps
-        # step_number = math.floor(midi_time / step_duration + amount)
-        # return step_number
 
         if sps <= 0:
             raise ValueError("sps must be greater than zero")
@@ -434,7 +432,6 @@ class MidiNote(MidiEvent):
         """
         quantized_start_step = self.quantize_to_nearest_step(self.start_time, sps, amount, is_floor=True)
         quantized_end_step = self.quantize_to_nearest_step(self.end_time, sps, amount, is_floor=False)
-        print(f"Initial quantized_end_step {quantized_start_step} {quantized_end_step}")
 
         if sps == 1:
             quantized_start_step = round(quantized_start_step)
@@ -515,7 +512,6 @@ class MidiNote(MidiEvent):
         self.quantized_start_step = max(0, self.quantized_start_step)
 
         self.quantized_step = sps
-
 
     def quantize(self, sps: int = 4, amount: float = 0.5, min_step: Optional[int] = None):
         """Returns a new quantized note with the specified number of steps per second (sps),

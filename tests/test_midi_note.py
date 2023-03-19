@@ -1,3 +1,9 @@
+"""
+Test suite for midi note
+Author Mus
+mbayramo@stanford.edu
+spyroot@gmail.com
+"""
 import math
 from unittest import TestCase
 import neural_graph_composer
@@ -513,3 +519,46 @@ class Test(TestCase):
         self.assertAlmostEquals(1.375, note.end_time, delta=0.1)
         self.assertEqual(6, note.quantized_start_step)
         self.assertEqual(45, note.quantized_end_step)
+
+    def test_note_comparison01(self):
+        # create some notes for testing
+        note1 = MidiNote(pitch=60, start_time=0.0, end_time=1.0)
+        note2 = MidiNote(pitch=60, start_time=0.0, end_time=2.0)
+        note3 = MidiNote(pitch=64, start_time=1.0, end_time=2.0)
+        note4 = MidiNote(pitch=60, start_time=1.0, end_time=2.0)
+
+        # test equality
+        self.assertEqual(note1, note1)
+        self.assertEqual(note1, MidiNote(pitch=60, start_time=0.0, end_time=1.0))
+        self.assertNotEqual(note1, note2)
+        self.assertNotEqual(note1, note3)
+
+        # test less than
+        self.assertLess(note1, note2)
+        self.assertLess(note1, note3)
+        self.assertLess(note1, note4)
+        self.assertLess(note2, note3)
+
+        self.assertFalse(note3 < note4)
+        self.assertFalse(note4 < note3)
+
+    def test_note_comparison02(self):
+        note1 = MidiNote(pitch=60, start_time=1.0, end_time=2.0)
+        note2 = MidiNote(pitch=64, start_time=1.0, end_time=2.0)
+        note3 = MidiNote(pitch=64, start_time=1.0, end_time=2.0)
+        note4 = MidiNote(pitch=64, start_time=1.0, end_time=3.0)
+        note5 = MidiNote(pitch=64, start_time=2.0, end_time=3.0)
+
+        self.assertTrue(note1 <= note2)
+        self.assertTrue(note2 <= note3)
+        self.assertTrue(note2 <= note1)
+        #
+        self.assertTrue(note3 <= note2)
+        self.assertTrue(note3 <= note4)
+        self.assertFalse(note4 <= note3)
+        self.assertTrue(note4 <= note5)
+        self.assertFalse(note5 <= note4)
+        self.assertFalse(note4 > note5)
+        self.assertFalse(note4 >= note5)
+
+

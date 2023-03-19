@@ -1,12 +1,16 @@
 """
 Midi instrument representation.
+
+@TODO split notion instrument ID and PRogram.
+
 Author Mus spyroot@gmail.com
 """
 
 from typing import Optional, Any
 
 # Note: While GM does not define the actual characteristics of any sounds,
-# the names in parentheses after each of the synth leads, pads, and sound effects are,
+# the names in parentheses after each of the synth leads,
+# pads, and sound effects are,
 # in particular, intended only as guides.
 MidiInstrumentMap = frozenset({
     range(1, 9): "Piano",

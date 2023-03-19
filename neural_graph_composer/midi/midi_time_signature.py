@@ -5,6 +5,7 @@ Author
 Mus spyroot@gmail.com
     mbayramo@stanford.edu
 """
+import logging
 import math
 from functools import cache
 from typing import Optional
@@ -30,8 +31,13 @@ class MidiTempoSignature(MidiSeq):
         """
         super().__init__()
 
-        print(f"Create MidiTempoSignature change {type(qpm)} n_times "
-              f"{type(midi_time)} resolution {type(resolution)}")
+        self.logger = logging.getLogger(__name__ + '.' + self.__class__.__name__)
+        self.logger.setLevel(logging.WARNING)
+
+        self.logger.debug(f"Creating tempo signature "
+                          f"midi time {midi_time} "
+                          f"qpm {qpm} "
+                          f"resolution {resolution}")
 
         if qpm is not None:
             assert isinstance(qpm, (int, float)), f"qpm must be a number, got {type(qpm)}"
@@ -52,8 +58,6 @@ class MidiTempoSignature(MidiSeq):
             self.midi_time = float(midi_time)
         else:
             self.midi_time = 0.0
-
-        print(f"Create MidiTempoSignature change {type(self.qpm)} n_times {midi_time} resolution {self.resolution}")
 
     @staticmethod
     def tempo_to_qpm(tempo: float) -> float:
@@ -146,7 +150,6 @@ class MidiTempoSignature(MidiSeq):
             self.midi_time, self.qpm)
 
     def __lt__(self, other):
-        # print(f"__lt__ other {other.seq} mine {self.seq}")
         if math.isclose(self.midi_time, other.midi_time):
             return self.seq < other.seq
 
@@ -194,6 +197,13 @@ class MidiTimeSignature(MidiSeq):
             raise ValueError("Denominator and numerator must be positive integers.")
         if not math.log2(denominator).is_integer():
             raise ValueError(f"Provided denominator {denominator} must be a negative power of 2 (e.g. 2, 4, 8, 16).")
+
+        self.logger = logging.getLogger(__name__ + '.' + self.__class__.__name__)
+        self.logger.setLevel(logging.WARNING)
+        self.logger.debug(f"Creating time signature "
+                          f"midi time {midi_time} "
+                          f"numerator {numerator} "
+                          f"numerator {numerator}")
 
         self.denominator: int = denominator
         self.numerator: int = numerator
@@ -261,7 +271,10 @@ class MidiTimeSignature(MidiSeq):
             self.seq, self.numerator, self.denominator, self.midi_time)
 
     def __lt__(self, other):
-        # print(f"__lt__ other {other.seq} mine {self.seq}")
+        """
+        :param other:
+        :return:
+        """
         if math.isclose(self.midi_time, other.midi_time):
             return self.seq < other.seq
 

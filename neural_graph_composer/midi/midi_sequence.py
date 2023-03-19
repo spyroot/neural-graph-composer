@@ -17,11 +17,13 @@ spyroot@gmail.com
 """
 import copy
 import itertools
+import logging
 from functools import cache
 from typing import Optional, List, Any
 
 import numpy as np
 
+from .callbacks import save_midi_callback
 from .midi_abstract_event import MidiEvents, MidiEvent
 from .midi_note import MidiNote
 from .midi_pitch_bend import MidiPitchBend
@@ -90,6 +92,9 @@ class MidiNoteSequence(MidiEvents):
         if is_debug is not None and not isinstance(is_debug, bool):
             raise ValueError("is_debug must be a boolean value.")
 
+        self.logger = logging.getLogger(__name__ + '.' + self.__class__.__name__)
+        self.logger.setLevel(logging.WARNING)
+
         # midi instrument information
         if instrument is None:
             self.instrument = MidiInstrumentInfo(0, "Generic")
@@ -121,6 +126,38 @@ class MidiNoteSequence(MidiEvents):
         self.steps_per_quarter = 0
         self.steps_per_second = 0
         self.tempo_signature: List[MidiTempoSignature] = []
+
+    def __lt__(self, other):
+        """Compares the `instrument_num`
+        of two `MidiNoteSequence` objects to determine order.
+        :param other:
+        :return:
+        """
+        if not isinstance(other, MidiNoteSequence):
+            return NotImplemented
+
+        if self.instrument.instrument_num == other.instrument.instrument_num:
+            return id(self) < id(other)
+
+        if other is None:
+            return False
+
+        return self.instrument.instrument_num < other.instrument.instrument_num
+
+    def __add__(self, other: 'MidiNoteSequence') -> 'MidiNoteSequence':
+        """
+        :param other:
+        :return:
+        """
+        if not isinstance(other, MidiNoteSequence):
+            return NotImplemented
+
+        if self.instrument != other.instrument:
+            raise ValueError("Instrument must be the same for both MidiNoteSequences.")
+
+        midi_seq = MidiNoteSequence(instrument=self.instrument)
+        midi_seq.notes = self.notes + other.notes
+        return midi_seq
 
     def __repr__(self):
         """
@@ -223,16 +260,16 @@ class MidiNoteSequence(MidiEvents):
         return []
 
     def add_note(self, note: MidiNote) -> None:
-        """Add a note to midi seq,  if given midi note is drum
-        it added to drum seq.
+        """Add a note to midi seq,  if given midi note is drum it added to drum seq.
         :param note: MidiNote object
         :raise a ValueError if the instrument of the note does not match the instrument of the sequence.
         :return: None
         """
         if note.instrument != self.instrument.instrument_num:
-            raise ValueError(f"Instrument {note.instrument} of note "
-                             f"must match instrument of sequence {self.instrument.instrument_num}")
-
+            raise ValueError(f"Note instrument {note.instrument} of note "
+                             f"must match instrument of this sequence"
+                             f" {self.instrument.instrument_num}. "
+                             f"Make sure you add note to correct sequence")
         if note.is_drum:
             self._drum_events.append(note)
             update_len = len(self._drum_events)
@@ -242,11 +279,10 @@ class MidiNoteSequence(MidiEvents):
 
         self.total_time = max(self.total_time, note.end_time)
 
-        if self.debug:
-            print(f"instrument {note.instrument} name {self.instrument.name} "
-                  f"note {note.pitch} name {note.pitch_name} "
-                  f"{note.start_time} {note.end_time} drum "
-                  f"{self.instrument.is_drum} seq len {update_len}")
+        logging.debug(f"instrument {note.instrument} name {self.instrument.name} "
+                      f"note {note.pitch} name {note.pitch_name} "
+                      f"{note.start_time} {note.end_time} drum "
+                      f"{self.instrument.is_drum} seq len {update_len}")
 
     def calculate_min_step(self) -> float:
         """Calculates the smallest time difference between any two notes in the sequence.
@@ -511,7 +547,6 @@ class MidiNoteSequence(MidiEvents):
         """
         self._quantize(sps, amount)
 
-
     @cache
     def initial_tempo(self) -> float:
         """Initial temp for this seq.
@@ -590,3 +625,53 @@ class MidiNoteSequence(MidiEvents):
         sequence.notes = notes
         sequence._adjust_total_time()
         return sequence
+
+    def validate_instrument(self) -> None:
+        """Check if all notes the sequence have the
+        same instrument number as the sequence itself.
+        :return:
+        :raises ValueError: If any note in the sequence has a different instrument number.
+        """
+        """Check if all notes in the sequence have the same instrument number as the sequence itself."""
+        for note in self.notes:
+            if note.instrument != self.instrument.instrument_num:
+                raise ValueError("All notes in the sequence must have the same instrument number")
+
+    def merge(self, other: "MidiNoteSequence") -> None:
+        """Merge notes from another MidiNoteSequence into the current sequence.
+        Note  both sequences must have the same instrument, resolution, etc.
+        :param other: The other MidiNoteSequence to merge.
+        :return: None
+        :raises ValueError: If the objects being merged are not of MidiNoteSequence type,
+                            if the sequences have different instruments or resolutions,
+                            or if any note in either sequence has a different instrument number.
+        """
+        if not isinstance(other, MidiNoteSequence):
+            raise ValueError("Can only merge MidiNoteSequence objects")
+
+        if self.instrument != other.instrument or self.resolution != other.resolution:
+            raise ValueError(f"Cannot merge MidiNoteSequences "
+                             f"with different instruments or resolutions. "
+                             f"current instrument {self.instrument} other {other.instrument}")
+
+        self.validate_instrument()
+        other.validate_instrument()
+
+        self.notes.extend(other.notes)
+        self.notes.sort(key=lambda note: note.start_time)
+
+    def to_midi_file(self, file_path: str, callback=save_midi_callback) -> None:
+        """Save the MIDI note sequence to a MIDI file.
+        :param callback: The callback function to use for writing the MIDI file. Defaults to save_midi_callback
+        :param file_path: file_path: The file path to save the MIDI file to.
+        :return:
+        """
+        if not callback:
+            raise ValueError("Callback function must be provided")
+
+        if self.notes is not None and self.instrument is not None:
+            notes = sorted(self.notes, key=lambda note: note.start_time)
+            callback(file_path, self.instrument, notes, self.total_time)
+        else:
+            raise ValueError("Cannot save empty MIDI note sequence")
+

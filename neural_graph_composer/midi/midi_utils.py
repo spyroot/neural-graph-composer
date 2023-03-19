@@ -172,7 +172,6 @@ def quantize_to_nearest_step(un_quantized_time, step_size, tempo=120, time_signa
     ticks_per_beat = 480  # default value for MIDI
     if step_size == 1:
         ticks_per_step = math.floor(ticks_per_beat * time_signature[0] / step_size)
-        # print(f"Step size {step_size} ticks_per_step {ticks_per_step}")
     else:
         ticks_per_step = math.ceil(ticks_per_beat * time_signature[0] / step_size)
     ticks_per_second = ticks_per_beat * tempo / 60

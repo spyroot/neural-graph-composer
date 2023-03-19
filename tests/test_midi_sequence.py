@@ -1,8 +1,11 @@
+import math
 from unittest import TestCase
 
 from neural_graph_composer.midi.midi_note import MidiNote
 from neural_graph_composer.midi.midi_sequence import MidiNoteSequence
 from neural_graph_composer.midi.midi_instruments import MidiInstrumentInfo
+from tests.test_utils import generate_notes
+import copy
 
 
 class Test(TestCase):
@@ -187,6 +190,9 @@ class Test(TestCase):
         self.assertListEqual(midi_seq.notes, expect)
 
     def test_quantize(self):
+        """
+        :return:
+        """
         seq = MidiNoteSequence()
         seq.add_note(MidiNote(pitch=60, velocity=100, start_time=0.2, end_time=1.4))
         seq.add_note(MidiNote(pitch=62, velocity=100, start_time=1.5, end_time=2.3))
@@ -199,3 +205,73 @@ class Test(TestCase):
         self.assertEqual(seq[0].end_time, 1.5)
         self.assertEqual(seq[1].start_time, 1.5)
         self.assertEqual(seq[1].end_time, 2.5)
+
+    def test_shift_times(self):
+        # create a midi note sequence
+        notes = list(generate_notes(10, 4, 60))
+        last_time = max([n.end_time for n in notes])
+        notes_copy = copy.deepcopy(notes)
+
+        # print(notes)
+        seq = MidiNoteSequence(notes)
+        self.assertTrue(last_time, seq.total_time)
+
+        # # Shift the notes by 2.0
+        seq.shift_times(2.0)
+
+        # # Assert that all notes have been shifted by 2.0
+        for i, n in enumerate(notes_copy):
+            self.assertAlmostEqual(n.start_time + 2.0, seq.notes[i].start_time,
+                                   msg=f"expect new time {n.start_time + 2.0} got {seq.notes[i].start_time}")
+            self.assertAlmostEqual(n.end_time + 2.0, seq.notes[i].end_time,
+                                   msg=f"expect new time {n.end_time + 2.0} got {seq.notes[i].end_time}")
+
+    def test_from_notes(self):
+        # Generate a list of MidiNote objects
+        notes = list(generate_notes(10, 4, 60))
+        # Create a MidiNoteSequence from the notes list
+        seq = MidiNoteSequence.from_notes(notes)
+
+        # Check that all the notes were added to the sequence
+        self.assertEqual(len(seq.notes), len(notes))
+        # Check that the start and end times of the sequence are correct
+        self.assertEqual(seq.notes[0].start_time, 0.0)
+        self.assertEqual(seq.notes[-1].end_time, seq.total_time)
+
+    def test_slice_notes(self):
+        # create a test sequence with some notes
+        seq = MidiNoteSequence.from_notes([
+            MidiNote(60, 0.0, 1.0, velocity=80),
+            MidiNote(62, 1.0, 2.0, velocity=90),
+            MidiNote(64, 2.0, 3.0, velocity=100),
+            MidiNote(65, 3.0, 4.0, velocity=110),
+            MidiNote(67, 4.0, 5.0, velocity=120),
+        ])
+
+        sliced_seq = seq.slice(1.0, 3.0)
+        #
+        # # expected sliced sequence
+        expected_seq = MidiNoteSequence.from_notes([
+            MidiNote(62, 1.0, 2.0, velocity=90),
+            MidiNote(64, 2.0, 3.0, velocity=100),
+        ])
+
+        # check that the sliced sequence matches the expected sequence
+        self.assertEqual(sliced_seq.notes, expected_seq.notes)
+        self.assertAlmostEqual(expected_seq.total_time, 3.0)
+
+    def test_midi_note_sequence_comparison(self):
+        """
+        :return:
+        """
+        midi_data1 = MidiNoteSequence(instrument=MidiInstrumentInfo(instrument=1, is_drum=False, name='Piano'))
+        midi_data2 = MidiNoteSequence(instrument=MidiInstrumentInfo(instrument=2, is_drum=False, name='Guitar'))
+        midi_data3 = MidiNoteSequence(instrument=MidiInstrumentInfo(instrument=3, is_drum=False, name='Violin'))
+        midi_data4 = MidiNoteSequence(instrument=MidiInstrumentInfo(instrument=4, is_drum=False, name='Bass'))
+
+        self.assertLess(midi_data1, midi_data2)
+        self.assertLess(midi_data2, midi_data3)
+        self.assertLess(midi_data3, midi_data4)
+        self.assertGreater(midi_data4, midi_data3)
+        self.assertGreater(midi_data3, midi_data2)
+        self.assertGreater(midi_data2, midi_data1)
