@@ -10,51 +10,82 @@ Mus spyroot@gmail.com
 import decimal
 import math
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
 import numpy as np
-import numpy as np
+from scipy.spatial import distance
 
 
-def steps_per_second_from_bpm(bpm: Optional[float] = 120, resolution: Optional[int] = 480):
-    """Calculates steps per second given bpm and resolution.
+@np.vectorize
+def steps_per_second_from_bpm(
+        bpm: Optional[Union[float, np.float32]] = 120,
+        resolution: Optional[int] = 480) -> Union[float, np.float32]:
+    """Calculates steps per second (sps) given bpm and resolution.
+
     The tempo of a MIDI sequence in BPM (beats per minute)
     We can calculate the number of steps per second by dividing the tempo by 60.
     Steps per second = (120 BPM * 480 standard resolution) / 60 = 960
 
-    :param bpm:  default value for midi is 120
-    :param resolution:  default resolution 480
-    :return:
+    :param bpm: The tempo of the MIDI sequence in BPM. Defaults to 120.
+    :type bpm: float, optional
+    :param resolution: The resolution of the MIDI sequence. Defaults to 480.
+    :type resolution: int, optional
+    :return: The number of steps per second.
+    :rtype: float
+
+    :Example:
+    >>> steps_per_second_from_bpm(120, 480)
+    960.0
+    >>> steps_per_second_from_bpm(np.array([120, 90]), 480)
+    array([960., 720.])
     """
     return bpm * resolution / 60.0
 
 
-def from_bpm_spq_to_sps(steps_per_quarter, bpm, four_quarter: Optional[int] = 4):
-    """Calculate step per second from step per quarter.
+@np.vectorize
+def from_bpm_spq_to_sps(
+        steps_per_quarter: Union[int, float, np.float32], bpm: Union[float, np.float32],
+        four_quarter: Optional[int] = 4) -> Union[float, np.float32]:
+    """Calculates steps per second (sps) from steps
+    per quarter and tempo in beats per minute (BPM).
 
-    :param steps_per_quarter:
-    :param bpm:
-    :param four_quarter:
-    :return:
+    :param steps_per_quarter: Steps per quarter note (int, float, or numpy float32).
+    :param bpm: Tempo in beats per minute (float or numpy float32).
+    :param four_quarter: Optional int indicating the denominator of the time signature. Defaults to 4.
+    :return: Steps per second (float or numpy float32).
+     :Example:
+    >>> from_bpm_spq_to_sps(480, 120)
+    8.0
+    >>> from_bpm_spq_to_sps(np.array([480, 240]), np.array([120, 60]))
+    array([8., 4.])
+    >>> from_bpm_spq_to_sps(480.0, 120.0)
+    8.0
+    >>> from_bpm_spq_to_sps(480, 120.0)
+    8.0
     """
     qpm = bpm / four_quarter
     return steps_per_quarter * qpm / 60.0
 
 
-def from_spq_to_sps(steps_per_quarter, qpm):
+@np.vectorize
+def from_spq_to_sps(
+        steps_per_quarter: Union[float, np.float32],
+        qpm: Union[float, np.float32]) -> Union[float, np.float32]:
     """Calculates steps per second (sps ) from steps per quarter.
     The tempo of a MIDI sequence in BPM (beats per minute)
 
     We can calculate the number of steps per second by dividing the tempo by 60.
     Steps per second = (120 BPM * 480 standard resolution) / 60 = 960
 
-    :param steps_per_quarter:
+    :param steps_per_quarter: Steps per quarter note (int, float, or numpy float32).
     :param qpm: quarter notes per minute
     :return:
     """
     return steps_per_quarter * qpm / 60.0
 
 
-def bpm_to_qpm_np(bpm: Optional[float] = 120.0, beats_per_measure: Optional[int] = 4) -> float:
+@np.vectorize
+def bpm_to_qpm_np(bpm: Optional[Union[float, np.float32]] = 120.0,
+                  beats_per_measure: Optional[int] = 4) -> Union[float, np.float32]:
     """Numeric stable version, Convert beats per minute (BPM) to quarter notes per minute (QPM).
     :param bpm: The tempo in beats per minute (default 120 BPM).
     :param beats_per_measure: The number of beats per measure (default 4).
@@ -64,7 +95,9 @@ def bpm_to_qpm_np(bpm: Optional[float] = 120.0, beats_per_measure: Optional[int]
     return np.round(qpm, decimals=10)
 
 
-def bpm_to_qpm(bpm: Optional[float] = 120.0, beats_per_measure: Optional[int] = 4) -> float:
+@np.vectorize
+def bpm_to_qpm(bpm: Union[float, np.float32] = 120.0,
+               beats_per_measure: Optional[int] = 4) -> Union[float, np.float32]:
     """Convert beats per minute (BPM) to quarter notes per minute (QPM).
     :param bpm: The tempo in beats per minute (default 120 BPM).
     :param beats_per_measure: The number of beats per measure (default 4).
@@ -74,19 +107,29 @@ def bpm_to_qpm(bpm: Optional[float] = 120.0, beats_per_measure: Optional[int] = 
     return qpm
 
 
-def qpm_to_bpm(qpm: Optional[int] = 120, quarter_note: Optional[int] = 4):
+@np.vectorize
+def qpm_to_bpm(
+        qpm: Union[float, np.float32] = 120.0,
+        quarter_note: int = 4) -> Union[float, np.float32]:
     """ QPM (Quarter Notes per Minute) is a measure of tempo in music,
         BPM (Beats per Minute) , convert QPM to BPM.
-    :param qpm:
-    :param quarter_note:
-    :return:
+    :param qpm: The tempo in QPM (default 120 QPM).
+    :param quarter_note: The denominator of the time signature (default 4).
+    :return: The tempo in BPM (float or numpy float32).
+    :example:
+    >>> qpm_to_bpm(120, 4)
+    480.0
     """
     return qpm * quarter_note
 
 
+@np.vectorize
 def frames_from_times(
-        start_time: float, end_time: float,
-        fps: float, min_frame_occupancy: Optional[float] = 0.0) -> Tuple[int, int]:
+        start_time: Union[float, np.float32],
+        end_time: Union[float, np.float32],
+        fps: Union[float, np.float32],
+        min_frame_occupancy: Optional[float] = 0.0) -> Tuple[int, int]:
+
     """Convert start and end times to frame indices.
      takes as input the start and end times of an event, the frames per second (fps)
 
@@ -120,18 +163,14 @@ def frames_from_times(
 def ft_quantize_to_nearest_step(unquantized_time: float,
                                 steps_per_second: float,
                                 rounding_threshold: float = 0.5) -> int:
-    """
-    Returns the nearest step based on the provided steps per second.
-
-    Args:
-        unquantized_time: The unquantized time positive in seconds.
-        steps_per_second: The number of steps per second to use for quantization.
-        rounding_threshold: The rounding threshold to use. If the fractional part of the result is greater than or equal
-                            to the rounding threshold, the result is rounded up to the nearest integer. Otherwise, the
-                            result is rounded down.
-
-    Returns:
-        The nearest step based on the provided steps per second.
+    """Returns the nearest step based on the provided steps per second.
+    :param unquantized_time:  The unquantized time positive in seconds.
+    :param steps_per_second:  The number of steps per second to use for quantization.
+    :param rounding_threshold:  The rounding threshold to use. If the fractional part of the
+                            result is greater than or equal
+                            to the rounding threshold, the result is rounded up to
+                             the nearest integer. Otherwise, the result is rounded down.
+    :return:  The nearest step based on the provided steps per second.
     """
     if not isinstance(unquantized_time, (int, float)):
         raise TypeError("unquantized_time must be a numeric type.")
@@ -183,26 +222,14 @@ def quantize_to_nearest_step(un_quantized_time, step_size, tempo=120, time_signa
         assert quantized_ticks % ticks_per_beat == 0, f"Ticks per step: {ticks_per_step}"
     return quantized_time
 
-
-# def quantize_to_nearest_step(time, step_size):
-#     return round(time / step_size) * step_size
-#
-# def quantize_to_nearest_step(un_quantized_time, step_size, tempo=120, time_signature=(4, 4)):
-#     """
-#     Quantizes the input time to the nearest step based on the specified step size (in beats).
-#     """
-#     ticks_per_beat = 480  # default value for MIDI
-#     if step_size == 1:
-#         ticks_per_step = math.ceil(ticks_per_beat * time_signature[0] / step_size)
-#     else:
-#         ticks_per_step = math.floor(ticks_per_beat * time_signature[0] / step_size)
-#     ticks_per_second = ticks_per_beat * tempo / 60
-#     un_quantized_ticks = int(un_quantized_time * ticks_per_second)
-#     quantized_ticks = int(round(un_quantized_ticks / ticks_per_step)) * ticks_per_step
-#     quantized_time = quantized_ticks / ticks_per_second
-#     return quantized_time
-
 def quantize_to_nearest_step_alt(unquantized_time, steps_per_second, rounding_threshold):
+    """
+
+    :param unquantized_time:
+    :param steps_per_second:
+    :param rounding_threshold:
+    :return:
+    """
     decimal_unquantized_time = decimal.Decimal(str(unquantized_time))
     decimal_steps_per_second = decimal.Decimal(str(steps_per_second))
     decimal_rounding_threshold = decimal.Decimal(str(rounding_threshold))
@@ -211,18 +238,20 @@ def quantize_to_nearest_step_alt(unquantized_time, steps_per_second, rounding_th
     return quantized_steps
 
 
-import numpy as np
-from scipy.spatial import distance
-
-
 def vector_quantize(notes, grid, metric=distance.euclidean):
+    """
+    :param notes:
+    :param grid:
+    :param metric:
+    :return:
+    """
     # calculate distances between each note and grid point
     distances = np.zeros((len(notes), len(grid)))
     for i, note in enumerate(notes):
         for j, point in enumerate(grid):
             distances[i, j] = metric(note, point)
 
-    # assign each note to nearest grid point
+    # assign each note to the nearest grid point
     quantized_notes = []
     for i in range(len(notes)):
         j = np.argmin(distances[i])
@@ -230,8 +259,6 @@ def vector_quantize(notes, grid, metric=distance.euclidean):
 
     return quantized_notes
 
-
-# #
 
 def quantize_and_snap_to_grid(notes, grid_size):
     """Quantizes the notes to the given grid size using linear interpolation.
@@ -368,6 +395,7 @@ class Pitch:
         (7, "A𝄫"),
         (0, "D𝄫"),
     ]
+
 
 def check_quantization(note_start, note_end, step_size, grid_size, expected_start, expected_end):
     quantized_start, quantized_end = quantize_note_to_step_grid(note_start, note_end, step_size, grid_size)
