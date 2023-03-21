@@ -1,9 +1,12 @@
+"""
+Callback used in different spots.
+Author Mus spyroot@gmail.com
+"""
 from typing import List
-
 from pretty_midi import pretty_midi
 
-from neural_graph_composer.midi.midi_instruments import MidiInstrumentInfo
 from neural_graph_composer.midi.midi_note import MidiNote
+from neural_graph_composer.midi.midi_instruments import MidiInstrumentInfo
 
 
 def save_midi_callback(file_path: str,
@@ -28,20 +31,24 @@ def save_midi_callback(file_path: str,
     if instrument is None:
         raise ValueError("The instrument object is None")
 
-    # Compute the MIDI ticks per beat based on the tempo resolution and the total time
-    ticks_per_beat = int((total_time * tempo * resolution) / 60)
+    midi = pretty_midi.PrettyMIDI(
+        initial_tempo=tempo,
+        resolution=resolution)
 
-    midi = pretty_midi.PrettyMIDI(initial_tempo=tempo,
-                                  resolution=resolution)
+    default = pretty_midi.Instrument(program=0)
+    midi.instruments.append(default)
 
-    pm_instrument = pretty_midi.Instrument(program=instrument.instrument_num,
-                                           is_drum=instrument.is_drum,
-                                           name=instrument.name)
+    pm_instrument = pretty_midi.Instrument(
+        program=instrument.instrument_num,
+        is_drum=instrument.is_drum,
+        name=instrument.name)
 
-    pm_notes = [pretty_midi.Note(velocity=note.velocity,
-                                 pitch=note.pitch,
-                                 start=note.start_time,
-                                 end=note.end_time) for note in notes]
+    pm_notes = [pretty_midi.Note(
+        velocity=note.velocity,
+        pitch=note.pitch,
+        start=note.start_time,
+        end=note.end_time) for note in notes]
+
     pm_instrument.notes.extend(pm_notes)
     midi.instruments.append(pm_instrument)
     midi.write(file_path)

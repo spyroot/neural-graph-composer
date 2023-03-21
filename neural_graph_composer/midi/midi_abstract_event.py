@@ -9,7 +9,7 @@ two property that caller can use.
 Author Mus spyroot@gmail.com
 """
 from abc import abstractmethod
-from typing import List
+from typing import List, Optional
 
 
 class MidiEvent:
@@ -20,12 +20,20 @@ class MidiEvent:
 
     @property
     @abstractmethod
-    def event_end_start(self):
+    def event_start_time(self) -> Optional[float]:
+        """Abstract property that should be implemented by subclasses.
+        Returns the start time of the MIDI event.
+        :return: A float representing the start time of the MIDI event, or None if the event has no start time.
+        """
         pass
 
     @property
     @abstractmethod
-    def event_end_time(self):
+    def event_end_time(self) -> Optional[float]:
+        """Abstract property that should be implemented by subclasses.
+        Returns the end time of the MIDI event.
+        :return: A float representing the end time of the MIDI event, or None if the event has no start time.
+        """
         pass
 
 
@@ -35,4 +43,8 @@ class MidiEvents:
     """
     @abstractmethod
     def get_midi_events(self) -> List[MidiEvent]:
+        """ Abstract method that should be implemented by subclasses.
+        Returns a list of MIDI events.
+        :return:
+        """
         pass

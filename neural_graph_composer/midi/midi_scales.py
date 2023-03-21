@@ -1020,10 +1020,14 @@ class MusicTheory:
 
         return sum(inverse_bases)
 
-
     @staticmethod
     def list_of_chords(root: int, interval: frozenset[str]) -> List[Tuple[str, List[int]]]:
-
+        """
+        @TODO FIx me
+        :param root:
+        :param interval:
+        :return:
+        """
         chord_pitches = MusicTheory.chord_pitch_from_interval(root, interval)
         print(f"chord_pitches pitch {chord_pitches}")
         chords = []
@@ -1035,7 +1039,7 @@ class MusicTheory:
             # chord_name = MusicTheory.pitch_names[chord_pitches[i]] + MusicTheory.chord_intervals[i]
             chord_interval = MusicTheory.chord_intervals[i]
             print(f"chord_interval {chord_interval}")
-            chord_name = MusicTheory.pitch_names[(root_pitch + chord_pitches[i]) % 12] + MusicTheory.chord_intervals[i]
+            chord_name = MusicTheory.pitch_names[(root + chord_pitches[i]) % 12] + MusicTheory.chord_intervals[i]
             print(f"chord_pitches pitch {chord_name}")
 
             chords.append(chord_name)

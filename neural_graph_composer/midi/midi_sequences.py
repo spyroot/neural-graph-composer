@@ -611,21 +611,6 @@ class MidiNoteSequences:
         i = bisect_right(self.key_signatures, MidiKeySignature(midi_time=start_time)) - 1
         return self.key_signatures[i].mode, self.key_signatures[i].midi_key
 
-    def __setattr__(self, key, value):
-        print(f"__setattr__ key {key} value: {value}")
-        if key == 'midi_seqs':
-            raise ValueError("Direct assignment to midi_seqs is not allowed. Please use the midi_seqs setter.")
-        super().__setattr__(key, value)
-
-    # @property
-    # def midi_seqs(self):
-    #     """
-    #     :return:
-    #     """
-    #     if self.__midi_seqs is None:
-    #         self.__midi_seqs = SortedDict()
-    #     return MappingProxyType(self._midi_seqs.copy())
-    #
     @property
     def __midi_seqs(self):
         """

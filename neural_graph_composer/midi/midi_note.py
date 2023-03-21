@@ -19,7 +19,6 @@ from .midi_spec import MAX_MIDI_VELOCITY
 from .midi_spec import MAX_MIDI_PITCH
 from .midi_spec import PITCH_FREQUENCIES, STANDARD_FREQ, REFERENCE_NOTE
 from .midi_spec import SEMITONES_PER_OCTAVE
-
 import json
 
 
@@ -677,11 +676,15 @@ class MidiNote(MidiEvent):
         :param is_drum: Optional[bool], whether the note is a drum part or not. Default is False.
         :return: MidiNote, a MidiNote object.
         """
-        # parse the note name
         pitch_value = librosa.note_to_midi(name)
         return cls(
-            pitch=pitch_value, start_time=start_time, end_time=end_time, velocity=velocity,
-            program=program, instrument=instrument, is_drum=is_drum
+            pitch=pitch_value,
+            start_time=start_time,
+            end_time=end_time,
+            velocity=velocity,
+            program=program,
+            instrument=instrument,
+            is_drum=is_drum
         )
 
     @staticmethod
@@ -716,16 +719,17 @@ class MidiNote(MidiEvent):
     def pitch_to_freq(pitch: str, octave: int) -> float:
         """Calculate the frequency of a pitch and octave in Hz.
 
+        :param pitch: musical pitch (e.g. 'C', 'C#', 'D', etc.)
+        :param octave: octave number (e.g. 4 for A440)
+        :return: frequency in Hz
+
+                :Example:
         >>> MusicNote.pitch_to_freq('A', 4)
         440.0
         >>> MusicNote.pitch_to_freq('C', 4)
         261.6255653005986
         >>> MusicNote.pitch_to_freq('F#', 5)
         739.988845423269
-
-        :param pitch: musical pitch (e.g. 'C', 'C#', 'D', etc.)
-        :param octave: octave number (e.g. 4 for A440)
-        :return: frequency in Hz
         """
         semitones_above_a4 = (octave - 4) * SEMITONES_PER_OCTAVE + PITCH_FREQUENCIES[pitch]
         return MidiNote.note_to_freq(REFERENCE_NOTE + semitones_above_a4)
@@ -776,7 +780,7 @@ class MidiNote(MidiEvent):
         )
 
     @property
-    def event_end_start(self) -> float:
+    def event_start_time(self) -> float:
         """Implements MidiEvent so caller construct seq of events
         :return:  midi start time
         """

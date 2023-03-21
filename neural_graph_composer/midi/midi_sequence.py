@@ -15,22 +15,25 @@ Author Mus
 mbayramo@stanford.edu
 spyroot@gmail.com
 """
+import bisect
 import copy
 import itertools
 import logging
+import math
 from functools import cache
-from typing import Optional, List, Any
+from typing import Optional, List, Any, Union
 
 import numpy as np
 
-from .callbacks import save_midi_callback
-from .midi_abstract_event import MidiEvents, MidiEvent
 from .midi_note import MidiNote
-from .midi_pitch_bend import MidiPitchBend
 from .midi_spec import DEFAULT_PPQ
-from .midi_control_change import MidiControlChange
-from .midi_instruments import MidiInstrumentInfo
+from .midi_quantizer import MidiQuantization
+from .midi_pitch_bend import MidiPitchBend
 from .midi_time_signature import MidiTempoSignature
+from .midi_instruments import MidiInstrumentInfo
+from .midi_control_change import MidiControlChange
+from .midi_abstract_event import MidiEvents
+from .callbacks import save_midi_callback
 
 
 # TODO evaluate two options.
@@ -43,11 +46,11 @@ from .midi_time_signature import MidiTempoSignature
 # import heapq as hq
 
 
-class MidiNoteSequence(MidiEvents):
+class MidiNoteSequence(MidiEvents, MidiQuantization):
     def __init__(self,
                  notes: List[Optional[MidiNote]] = None,
                  drum_events: List[Optional[MidiNote]] = None,
-                 instrument: Optional[MidiInstrumentInfo] = None,
+                 instrument: Union[int, MidiInstrumentInfo, None] = None,
                  resolution: Optional[int] = 220,
                  is_debug: Optional[bool] = True):
         """
@@ -82,34 +85,43 @@ class MidiNoteSequence(MidiEvents):
         :param is_debug: whether to print debug messages or not
         """
         if notes is not None and not isinstance(notes, List):
-            raise ValueError(f"Notes must be a list of MidiNote objects, received {type(notes)}")
+            raise ValueError(
+                f"Notes must be a list of MidiNote objects, received {type(notes)}")
         if drum_events is not None and not isinstance(drum_events, List):
             raise ValueError("Drum events must be a list of MidiNote objects.")
-        if instrument is not None and not isinstance(instrument, MidiInstrumentInfo):
-            raise ValueError("Instrument must be a MidiInstrumentInfo object.")
+        if isinstance(instrument, int):
+            instrument = MidiInstrumentInfo(
+                instrument=instrument, is_drum=False, name='Instrument')
+        elif instrument is not None and not isinstance(instrument, MidiInstrumentInfo):
+            raise ValueError(
+                "Instrument must be a MidiInstrumentInfo object.")
         if resolution is not None and not isinstance(resolution, int):
-            raise ValueError("Resolution must be an integer.")
+            raise ValueError(
+                "Resolution must be an integer.")
         if is_debug is not None and not isinstance(is_debug, bool):
-            raise ValueError("is_debug must be a boolean value.")
+            raise ValueError(
+                "is_debug must be a boolean value.")
 
         self.logger = logging.getLogger(__name__ + '.' + self.__class__.__name__)
         self.logger.setLevel(logging.WARNING)
 
         # midi instrument information
         if instrument is None:
-            self.instrument = MidiInstrumentInfo(0, "Generic")
+            self.instrument = MidiInstrumentInfo(0, is_drum=False, name="Generic")
         else:
             self.instrument = instrument
 
         self._notes = [] if notes is None else [n for n in notes if not self.instrument.is_drum]
         self._drum_events = [] if notes is None else [n for n in notes if self.instrument.is_drum]
         # midi seq total time
-        self._total_time = max([n.end_time for n in self.notes], default=0.0)
+        self.__total_time = max([n.end_time for n in self.notes], default=0.0)
 
         # list of cv changes
         self.control_changes: List[MidiControlChange] = []
         # list of pitch bends
         self.pitch_bends: List[MidiPitchBend] = []
+        #
+        self.tempo_signature: List[MidiTempoSignature] = []
 
         self.program = 0
         # 240 ticks per 16th note.
@@ -118,14 +130,41 @@ class MidiNoteSequence(MidiEvents):
         self.ticks_per_quarter: int = 0
 
         # total time for this midi seq for given instrument.
-        self.total_quantized_steps: int = 0
         self.quantized_step: int = 0
         self.debug = is_debug
 
-        self.resolution = resolution
-        self.steps_per_quarter = 0
-        self.steps_per_second = 0
-        self.tempo_signature: List[MidiTempoSignature] = []
+        self.__resolution = resolution
+        _total_time: Union[float, np.floating] = 0.0
+        self.__total_quantized_steps: int = 0
+
+        self.__steps_per_quarter = 0
+        self._steps_per_second = 0
+
+    @property
+    def resolution(self):
+        """Returns the resolution of the sequence. it read only
+        Resolution refers to the number of divisions per quarter note (or beat)
+        that is used to subdivide time intervals in a MIDI file.
+        For example, a resolution of 480 means that each quarter
+        note is divided into 480 time intervals,  so each time
+        interval represents 1/480th of a quarter note.
+        """
+        return self.__resolution
+
+    @property
+    def total_quantized_steps(self):
+        """Returns the total number of quantized steps in the sequence."""
+        return self.__total_quantized_steps
+
+    @property
+    def steps_per_quarter(self) -> int:
+        """Returns the number of quantized steps per quarter note in the sequence."""
+        return self.__steps_per_quarter
+
+    @property
+    def steps_per_second(self) -> int:
+        """Returns the number of quantized steps per second in the sequence."""
+        return self._steps_per_second
 
     def __lt__(self, other):
         """Compares the `instrument_num`
@@ -145,50 +184,64 @@ class MidiNoteSequence(MidiEvents):
         return self.instrument.instrument_num < other.instrument.instrument_num
 
     def __add__(self, other: 'MidiNoteSequence') -> 'MidiNoteSequence':
-        """
+        """Adds to MidiNoteSequence to single one i.e merge
         :param other:
         :return:
         """
         if not isinstance(other, MidiNoteSequence):
-            return NotImplemented
+            raise TypeError(f"Cannot add 'MidiNoteSequence' and '{type(other)}'")
 
         if self.instrument != other.instrument:
             raise ValueError("Instrument must be the same for both MidiNoteSequences.")
 
         midi_seq = MidiNoteSequence(instrument=self.instrument)
-        midi_seq.notes = self.notes + other.notes
+        if self.notes is not None:
+            midi_seq.notes = self.notes.copy()
+        else:
+            midi_seq.notes = []
+        if other.notes is not None:
+            midi_seq.notes += other.notes.copy()
         return midi_seq
 
     def __repr__(self):
         """
         :return:
         """
-        notes = f'MidiNoteSequence({self.instrument}' + ', '.join([str(n) for n in self._notes]) + ')'
+        if self._notes is not None:
+            notes = f'MidiNoteSequence({self.instrument}' + ', '.join([str(n) for n in self._notes]) + ')'
+        else:
+            notes = f'MidiNoteSequence({self.instrument})'
         return notes
 
     def __str__(self):
         """
         :return:
         """
-        notes = f'MidiNoteSequence({self.instrument}' + ', '.join([str(n) for n in self._notes]) + ')'
+        if self._notes is not None:
+            notes = f'MidiNoteSequence({self.instrument}' + ', '.join([str(n) for n in self._notes]) + ')'
+        else:
+            notes = f'MidiNoteSequence({self.instrument})'
         return notes
 
     @property
-    def total_time(self) -> float:
-        """Returns the total time of the midi sequence."
+    def total_time(self) -> Union[float, np.floating]:
+        """Returns the total time of the midi sequence"
         :return:
         """
-        return self._total_time
+        return self.__total_time
 
     @total_time.setter
-    def total_time(self, value: float) -> None:
+    def total_time(self, value: Union[float, np.floating]) -> None:
         """Sets the total time of the midi sequence.
         :param value:
         :return:
         """
-        if value < 0:
-            raise ValueError("total midi sequence time cannot be negative")
-        self._total_time = value
+        if not isinstance(value, (float, np.floating, int)):
+            raise TypeError(f"total midi sequence time must be a float or numpy scalar, not {type(value)}")
+        if isinstance(value, int):
+            value = float(value)
+
+        self.__total_time = max(0, math.inf if value > math.inf else value)
 
     @property
     def drum_events(self) -> List[MidiNote]:
@@ -197,7 +250,7 @@ class MidiNoteSequence(MidiEvents):
 
     @property
     def notes(self) -> List[MidiNote]:
-        """Return notes or drum events."""
+        """Return midi notes or drum events."""
         if self.instrument is not None and self.instrument.is_drum:
             return self._drum_events
 
@@ -218,45 +271,76 @@ class MidiNoteSequence(MidiEvents):
             self.total_time = max([n.end_time for n in self._drum_events], default=0.0)
 
     def __len__(self) -> int:
-        """
+        """Return length of this midi sequence.
         :return:
         """
         return len(self.notes)
 
-    def __getitem__(self, index) -> MidiNote:
-        """
+    def __getitem__(self, index: int) -> MidiNote:
+        """No check
         :param index:
         :return:
         """
         return self.notes[index]
 
     def __iter__(self):
-        """
+        """No check
         :return:
         """
         return iter(self.notes)
 
-    def append(self, note: MidiNote):
-        """Append a note and update total_time.
-        """
-        self.notes.append(note)
-        self.total_time = max(self.total_time, note.end_time)
-
-    def extend(self, notes: List[MidiNote]):
-        """Extended midi seq
-        :param notes:
+    def append(self, note: Union[MidiNote, list[MidiNote]]) -> None:
+        """Append a note or list of notes and update total_time.
+        :param note: MidiNote or list[MidiNote]
         :return:
         """
-        self.notes.extend(notes)
-        self.total_time = max(self.total_time, max(note.end_time for note in notes))
+        if isinstance(note, MidiNote):
+            self.notes.append(note)
+            self.total_time = max(self.total_time, note.end_time)
+        elif isinstance(note, list):
+            self.notes.extend(note)
+            max_end_time = max(note, key=lambda n: n.end_time).end_time
+            self.total_time = max(self.total_time, max_end_time)
+        else:
+            raise TypeError("note must be a MidiNote object or a list of MidiNote objects")
+
+    def extend(self, notes: Union[MidiNote, List[MidiNote]]) -> None:
+        """Extend midi seq with a note or list of notes and update total_time.
+        :param notes: MidiNote or list[MidiNote]
+        :return:
+        """
+        if isinstance(notes, MidiNote):
+            self.notes.append(notes)
+            self.total_time = max(self.total_time, notes.end_time)
+        elif isinstance(notes, list):
+            self.notes.extend(notes)
+            max_end_time = max(notes, key=lambda n: n.end_time).end_time
+            self.total_time = max(self.total_time, max_end_time)
+        else:
+            raise TypeError("notes must be a MidiNote object or a list of MidiNote objects")
+
+    # def merge(self, other: 'MidiNoteSequence'):
+    #     """Merges two MidiNoteSequence objects into a single MidiNoteSequence object.
+    #     :param other: MidiNoteSequence to merge into self
+    #     :return: Merged MidiNoteSequence
+    #     """
+    #     if not isinstance(other, MidiNoteSequence):
+    #         raise TypeError(f"Cannot merge 'MidiNoteSequence' and '{type(other)}'")
+    #     if self.instrument != other.instrument:
+    #         raise ValueError("Instrument must be the same for both MidiNoteSequences.")
+    #
+    #     merged_notes = self.notes + other.notes
+    #     merged_total_time = max(self.total_time, other.total_time)
+    #     return
 
     def as_note_seq(self) -> List[int]:
-        """Return note sequence as list of int where each int is note pitch
+        """    Returns the note sequence of the MidiNoteSequence object as a list
+        of integers, where each integer represents or drum event.
         :return: list of ints
         """
         if self.notes:
+            self.notes.sort(key=lambda n: n.start_time)
             return [n.pitch for n in self.notes]
-
         return []
 
     def add_note(self, note: MidiNote) -> None:
@@ -326,21 +410,16 @@ class MidiNoteSequence(MidiEvents):
         [n.stretch(amount) for n in self.notes]
         self._adjust_total_time()
 
-    def truncate(self, end_time: float):
-        """In place truncates the note sequence so that all notes end before `end_time`.
-        and return new truncated note sequence.
-        :param end_time:
-        :return:
+    def truncate(self, end_time: float) -> 'MidiNoteSequence':
+        """In place truncates the note sequence so that all notes end before
+        `end_time` returned a new truncated note sequence.
+        :param end_time: float
+        :return: MidiNoteSequence
         """
-        new_notes = []
-        for note in self.notes:
-            if note.end_time > end_time:
-                note = copy.deepcopy(note)
-                note.end_time = end_time
-            new_notes.append(note)
-
-        self.notes = new_notes
-        self.total_time = end_time
+        new_notes = [copy.deepcopy(note) for note in self.notes if note.end_time <= end_time]
+        truncated_seq = MidiNoteSequence(instrument=self.instrument, notes=new_notes)
+        truncated_seq.total_time = min(self.total_time, end_time)
+        return truncated_seq
 
     @staticmethod
     def compute_intervals(seq_sorted_by_time: List[MidiNote],
@@ -418,10 +497,11 @@ class MidiNoteSequence(MidiEvents):
         [n.shift_time(offset) for n in self.notes]
         self.total_time += offset
 
-    def extract_notes(
-            self, split_times: List[float]) -> List[Any]:
-
-        """Extracts notes from a midi sequence."""
+    def extract(self, split_times: List[float]) -> List[Any]:
+        """Extracts notes from a midi sequence.
+        :param split_times:
+        :return:
+        """
         if self.is_quantized():
             raise ValueError("You need quantize first")
 
@@ -523,8 +603,8 @@ class MidiNoteSequence(MidiEvents):
             quantized_note = note.quantize(sps=sps, amount=amount)
             new_notes.append(quantized_note)
             # update total_quantized_steps
-            if note.quantized_end_step > self.total_quantized_steps:
-                self.total_quantized_steps = note.quantized_end_step
+            if note.quantized_end_step > self.__total_quantized_steps:
+                self.__total_quantized_steps = note.quantized_end_step
 
         new_control_changes = []
         #  quantize control changes and text annotations.
@@ -580,7 +660,7 @@ class MidiNoteSequence(MidiEvents):
         cloned.pitch_bends = copy.deepcopy(self.pitch_bends)
         cloned.total_time = self.total_time
         cloned.ticks_per_quarter = self.ticks_per_quarter
-        cloned.total_quantized_steps = self.total_quantized_steps
+        cloned.__total_quantized_steps = self.__total_quantized_steps
         cloned.quantized_step = self.quantized_step
         cloned.instrument = self.instrument
         cloned.resolution = self.resolution
@@ -593,7 +673,7 @@ class MidiNoteSequence(MidiEvents):
         cloned = MidiNoteSequence()
         cloned.total_time = self.total_time
         cloned.ticks_per_quarter = self.ticks_per_quarter
-        cloned.total_quantized_steps = self.total_quantized_steps
+        cloned.__total_quantized_steps = self.__total_quantized_steps
         cloned.quantized_step = self.quantized_step
         cloned.instrument = self.instrument
         cloned.resolution = self.resolution
@@ -657,8 +737,42 @@ class MidiNoteSequence(MidiEvents):
         self.validate_instrument()
         other.validate_instrument()
 
-        self.notes.extend(other.notes)
-        self.notes.sort(key=lambda note: note.start_time)
+        # merge the notes
+        for note in other.notes:
+            idx = bisect.bisect_left(self.notes, note)
+            self.notes.insert(idx, note)
+
+        self._adjust_total_time()
+        # self.notes.extend(other.notes)
+        # self.notes.sort(key=lambda note: note.start_time)
+
+    def cut_in_place(self, cut_size: int):
+        """In place cut
+        :param cut_size:
+        :return:
+        """
+        self.notes = self.notes[:cut_size]
+        self.total_time = max([n.end_time for n in self.notes], default=0.0)
+
+    def insert(self, note: MidiNote):
+        """Inserts a new note into the sequence, maintaining the sorted order by start time.
+        :param note: MidiNote
+        :return: None
+        """
+        idx = bisect.bisect_left(self.notes, note)
+        self.notes.insert(idx, note)
+        self._adjust_total_time()
+
+    def cut(self, cut_size: int) -> 'MidiNoteSequence':
+        """Truncates the note sequence so that only the first `cut_size` notes remain,
+        and returns a new sequence with the truncated notes.
+        :param cut_size: int
+        :return: MidiNoteSequence
+        """
+        truncated_notes = self.notes[:cut_size]
+        truncated_seq = MidiNoteSequence(instrument=self.instrument, notes=truncated_notes)
+        truncated_seq.total_time = min(self.total_time, truncated_notes[-1].end_time)
+        return truncated_seq
 
     def to_midi_file(self, file_path: str, callback=save_midi_callback) -> None:
         """Save the MIDI note sequence to a MIDI file.
@@ -675,3 +789,34 @@ class MidiNoteSequence(MidiEvents):
         else:
             raise ValueError("Cannot save empty MIDI note sequence")
 
+    def test_merge(self):
+        # Create two MidiNoteSequence objects with some notes
+        notes1 = [
+            MidiNote(pitch=60, velocity=100, start_time=0, end_time=1),
+            MidiNote(pitch=64, velocity=100, start_time=0, end_time=2),
+            MidiNote(pitch=67, velocity=100, start_time=1, end_time=3)
+        ]
+        notes2 = [
+            MidiNote(pitch=72, velocity=100, start_time=0, end_time=1.5),
+            MidiNote(pitch=76, velocity=100, start_time=1, end_time=2.5),
+            MidiNote(pitch=79, velocity=100, start_time=2, end_time=3.5)
+        ]
+
+        seq1 = MidiNoteSequence(notes=notes1, instrument=1)
+        seq2 = MidiNoteSequence(notes=notes2, instrument=2)
+
+        # Merge the two sequences
+        merged_seq = seq1.merge(seq2)
+
+        # Check that the merged sequence contains all the notes in the correct order
+        expected_notes = [
+            MidiNote(pitch=60, velocity=100, start_time=0, end_time=1, instrument=1),
+            MidiNote(pitch=64, velocity=100, start_time=0, end_time=2, instrument=1),
+            MidiNote(pitch=72, velocity=100, start_time=0, end_time=1.5, instrument=2),
+            MidiNote(pitch=67, velocity=100, start_time=1, end_time=3, instrument=1),
+            MidiNote(pitch=76, velocity=100, start_time=1, end_time=2.5, instrument=2),
+            MidiNote(pitch=79, velocity=100, start_time=2, end_time=3.5, instrument=2)
+        ]
+        self.assertEqual(len(merged_seq.notes), len(expected_notes))
+        for i, note in enumerate(expected_notes):
+            self.assertEqual(merged_seq.notes[i], note)

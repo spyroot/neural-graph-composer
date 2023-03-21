@@ -5,17 +5,24 @@ Author Mus spyroot@gmail.com
 import math
 from enum import auto, Enum
 from typing import Optional
-
 from neural_graph_composer.midi.midi_seq import MidiSeq
 
 
 class KeySignatureType(Enum):
+    """
+    """
     MAJOR = auto()
     MINOR = auto()
 
 
 class MidiKeySignature(MidiSeq):
-    def __init__(self, midi_time: Optional[float] = 0.0, midi_key: Optional[int] = 0, midi_mode: Optional[int] = 0) -> None:
+    """
+
+    """
+    def __init__(
+            self, midi_time: Optional[float] = 0.0,
+            midi_key: Optional[int] = 0,
+            midi_mode: Optional[int] = 0) -> None:
         """MIDI Key signature
         https://www.recordingblogs.com/wiki/midi-key-signature-meta-message
 
@@ -65,7 +72,6 @@ class MidiKeySignature(MidiSeq):
 
     def __lt__(self, other):
         """
-
         :param other:
         :return:
         """

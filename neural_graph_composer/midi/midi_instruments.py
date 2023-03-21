@@ -68,9 +68,6 @@ class MidiInstrumentInfo:
             else:
                 name = "Unknown"
 
-        # if not name:
-        #     name = "Unknown"
-
         self.name: str = name
         self.is_drum = is_drum
 
@@ -90,6 +87,12 @@ class MidiInstrumentInfo:
         :return: The string representation of the object.
         """
         return f"MidiInstrumentInfo({self.instrument_num}, '{self.name}', {self.is_drum})"
+
+    def __str__(self) -> str:
+        """Returns a string representation of the object.
+        :return:  A string representation of the object.
+        """
+        return f"MidiInstrumentInfo({self.instrument_num}, {self.name}, {self.is_drum})"
 
     def __ne__(self, other: Any) -> bool:
         """Checks if two MidiInstrumentInfo objects are not equal.
@@ -111,12 +114,6 @@ class MidiInstrumentInfo:
         :return: hash value of the instance
         """
         return hash((self.instrument_num, self.name, self.is_drum))
-
-    def __str__(self) -> str:
-        """Returns a string representation of the object.
-        :return:  A string representation of the object.
-        """
-        return f"MidiInstrumentInfo({self.instrument_num}, {self.name}, {self.is_drum})"
 
     @classmethod
     def from_dict(cls, data: dict) -> 'MidiInstrumentInfo':
