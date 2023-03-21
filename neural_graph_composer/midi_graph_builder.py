@@ -9,7 +9,7 @@ Author Mus spyroot@gmail.com
 import logging
 from collections import defaultdict
 from enum import auto, Enum
-from typing import Optional
+from typing import Optional, Generator, Dict
 from typing import Union, List, Any
 
 import librosa
@@ -44,35 +44,47 @@ class MidiGraphBuilder:
     }
 
     def __init__(self,
-                 midi_data: Union[MidiNoteSequence, MidiNoteSequences],
+                 midi_data: Union[MidiNoteSequence, MidiNoteSequences, Generator[MidiNoteSequence, None, None]] = None,
                  per_instrument: Optional[bool] = True,
                  hidden_feature_size: int = 64):
         """
         :param midi_data: midi_sequences object
         :param per_instrument:  Will build graph for each instrument.
         """
-        if isinstance(midi_data, MidiNoteSequence):
-            midi_data = MidiNoteSequences(midi_seq=[midi_data])
-
-        if not isinstance(midi_data, MidiNoteSequences):
-            raise TypeError("midi_data must be an instance of MidiNoteSequence or MidiNoteSequences")
+        if midi_data is not None:
+            if isinstance(midi_data, MidiNoteSequence):
+                midi_data = MidiNoteSequences(midi_seq=[midi_data])
+            if not isinstance(midi_data, MidiNoteSequences) or isinstance(midi_data, Generator):
+                raise TypeError("midi_data must be an instance "
+                                "of Generator, MidiNoteSequence or MidiNoteSequences")
+        else:
+            midi_data = None
 
         self.logger = logging.getLogger(__name__ + '.' + self.__class__.__name__)
         self.logger.setLevel(logging.WARNING)
 
         # this a default name that we use for node attributes
         self.node_attr_name = ["attr"]
-        # in case we need map hashed value back to midi notes set
-        self.hash_to_midi_set = {}
-        self.midi_sequences = midi_data
+
+        # all read-only properties
+        self._notes_to_hash = {}
+        self._hash_to_notes = {}
+        self._hash_to_index = {}
+        self._index_to_hash = {}
+
         #
         self.hidden_feature_size = hidden_feature_size
-
         #
         self.pre_instrument = per_instrument
         # if per_instrument is true and number of instrument is > 0 each wil have own graph
         self._pyg_data = []
+        # all sub graph for a same midi populate here.
         self._sub_graphs = []
+        self.midi_sequences = midi_data
+        #
+        self.pre_instrument = per_instrument
+
+
 
     @property
     def sub_graphs(self) -> List[Graph]:
@@ -153,7 +165,8 @@ class MidiGraphBuilder:
                     continue
 
                 if isinstance(value, (tuple, list)) and isinstance(value[0], Tensor):
-                    logging.debug(f" -> Adding data key {key} case two shape len {len(value)} data[key] len {data[key]}")
+                    logging.debug(
+                        f" -> Adding data key {key} case two shape len {len(value)} data[key] len {data[key]}")
                     data[key] = torch.stack(value, dim=0)
                 else:
                     try:
@@ -244,26 +257,61 @@ class MidiGraphBuilder:
         return midi_graph.get_edge_data(hash_of_u, hash_of_v)
 
     def build(self,
+              midi_seqs: Optional[MidiNoteSequences] = None,
               default_trim_time: Optional[int] = 3,
               max_vector_size: Optional[int] = 5,
               velocity_num_buckets: Optional[int] = 8,
-              node_attr_type: NodeAttributeType = NodeAttributeType.Tensor,
-              is_debug: Optional[bool] = False):
+              node_attr_type: NodeAttributeType = NodeAttributeType.Tensor):
         """
-        :param default_trim_time:
+         Build a graph for one or more midi sequences.
+        :param midi_seqs: A  MidiNoteSequence objects, If `None`, use the sequences passed to the constructor.
+        :param default_trim_time: The time resolution to use for each note. For  example,
+                                 if `default_trim_time=3`, notes played at `0.001` and`0.00001`
+                                 would both be rounded to `0.000`
+
         :param max_vector_size:
         :param velocity_num_buckets:
-        :param node_attr_type:
-        :param is_debug:
+        :param node_attr_type:  The type of attribute to use for each node in the graph.
+                                Can be either `NodeAttributeType.Tensor`
+                                or `NodeAttributeType.OneHotTensor`.
         :return:
         """
+        _midi_seq = None
+        if midi_seqs is None and self.midi_sequences is None:
+            raise ValueError("No MIDI sequences provided.")
 
-        for s in self.midi_sequences:
+        if not isinstance(default_trim_time, int):
+            raise TypeError("default_trim_time must be an integer")
+
+        if not isinstance(max_vector_size, int):
+            raise TypeError("max_vector_size must be an integer")
+
+        if not isinstance(velocity_num_buckets, int):
+            raise TypeError("velocity_num_buckets must be an integer")
+
+        _midi_seq = midi_seqs if midi_seqs is not None else self.midi_sequences
+
+        for s in _midi_seq:
+            print(midi_seqs[s].instrument)
+            print(f"number of notes {len(midi_seqs[s].notes)}")
             g = self.build_sequence(
-                self.midi_sequences[s], default_trim_time=default_trim_time, max_vector_size=max_vector_size,
+                _midi_seq[s],
+                default_trim_time=default_trim_time,
+                max_vector_size=max_vector_size,
                 velocity_num_buckets=velocity_num_buckets, node_attr_type=node_attr_type,
-                is_debug=is_debug
             )
+
+            if not g.nodes:
+                continue
+            has_attrs = all('attr' in g.nodes[n] for n in g)
+            if not has_attrs:
+                raise ValueError("Not all nodes have attributes in the graph")
+            has_attrs = all('node_hash' in g.nodes[n] for n in g)
+            if not has_attrs:
+                raise ValueError("Not all nodes have attributes in the graph")
+            has_attrs = all('label' in g.nodes[n] for n in g)
+            if not has_attrs:
+                logging.warning("Not all nodes have 'label' attribute in the graph.")
 
             # g = nx.convert_node_labels_to_integers(g)
             pyg_data = self.from_midi_networkx(g)
@@ -276,13 +324,11 @@ class MidiGraphBuilder:
             default_trim_time: Optional[int] = 3,
             max_vector_size: Optional[int] = 5,
             velocity_num_buckets: Optional[int] = 8,
-            node_attr_type: NodeAttributeType = NodeAttributeType.Tensor,
-            is_debug: Optional[bool] = False):
+            node_attr_type: NodeAttributeType = NodeAttributeType.Tensor):
         """Build a graph for single midi sequence for particular instrument.
         If we need merge all instrument to a single graph, caller
         need use build method that will merge all graph to a single large graph.
 
-        :param is_debug: for debug purpose will move out
         :param node_attr_type: dictates how we want re-present a node attribute.
                                as Tensor fixed size or as One hot vector
         :param max_vector_size: dictate a maximum size of tensor.
@@ -321,6 +367,8 @@ class MidiGraphBuilder:
         # sort by time
         sorted_keys = list(data.keys())
         sorted_keys.sort()
+        if not sorted_keys:
+            return nx.DiGraph()
 
         # Create directed graph.
         #  - a chord that already played will point itself.
@@ -347,17 +395,14 @@ class MidiGraphBuilder:
             new_node_hash = hash(pitch_set)
             # we add hash for a given pitch_set to dict,
             # so we can recover if we need 2
-            if new_node_hash not in self.hash_to_midi_set:
-                self.hash_to_midi_set[pitch_set] = new_node_hash
+            if new_node_hash not in self._notes_to_hash:
+                self._notes_to_hash[pitch_set] = new_node_hash
+                self._hash_to_notes[new_node_hash] = pitch_set
 
             # mapping map hash to pitch name
             mapping[new_node_hash] = pitch_names
             if node_attr_type not in self.ENCODINGS:
                 raise ValueError("Unknown encoder type")
-
-            # new_x = self.ENCODINGS[node_attr_type](pitch_set)
-            # pitch_attr = Encodings.to_tensor(pitch_set, node_attr_type, max_vector_size)
-            # pitch_attr = self.ENCODINGS[node_attr_type](pitch_set)
 
             if node_attr_type == NodeAttributeType.Tensor:
                 pitch_attr = torch.FloatTensor(list(pitch_set))
@@ -371,70 +416,100 @@ class MidiGraphBuilder:
 
             if last_node_hash is None:
                 midi_graph.add_node(new_node_hash, attr=new_x, label=new_node_hash, node_hash=new_node_hash)
-                # print(new_node_hash)
                 last_node_hash = new_node_hash
                 last_node_name = pitch_names
             else:
                 # if node already connected update weight
                 if midi_graph.has_edge(new_node_hash, last_node_hash):
                     midi_graph[new_node_hash][last_node_hash]['weight'] += 1
-                    # if self.nodes_connected(midi_graph, new_node_hash, last_node_hash):
-                    #     uv = midi_graph.get_edge_data(last_node_hash, new_node_hash)
-                    #     if uv is not None:
-                    #         midi_graph[new_node_hash][last_node_hash]['weight'] += 1
-                    #
-                    #     vu = midi_graph.get_edge_data(new_node_hash, last_node_hash)
-                    #     if vu is not None:
-                    #         midi_graph[last_node_hash][new_node_hash]['weight'] += 1
-                    #
-                    #     if is_debug:
-                    #         print(f"---- Already connected {pitch_names} {last_node_name}")
-                    #         print(f"---- uv {uv} last_hash {last_node_hash}")
-                    #         print(f"---- vu {vu}")
-
-                    # midi_graph[pitch_set_hash][last_node]['weight'] += 1
-                    # midi_graph[new_node_hash][last_node_hash]['weight'] += 1
-                    # midi_graph[last_node_hash][new_node_hash]['weight'] += 1
-                    if is_debug:
-                        print(f"---- Already connected {pitch_names} {last_node_name}")
                 else:
-                    if is_debug:
-                        print(f"---- Adding an edge from {pitch_names} {last_node_name}")
                     midi_graph.add_node(new_node_hash, attr=new_x, label=pitch_names, node_hash=new_node_hash)
-                    # midi_graph.add_edge(pitch_set_hash, last_node_hash, weight=1.0)
                     midi_graph.add_edge(last_node_hash, new_node_hash, weight=1.0)
-                    # midi_graph.add_weighted_edges_from((pitch_set_hash, last_node, 1.0))
-
                 last_node_hash = new_node_hash
                 last_node_name = pitch_names
 
         # midi_graph = nx.relabel_nodes(midi_graph, mapping)
         return midi_graph
 
-    def graphs(self):
-        """Generator
+    @property
+    def hidden(self):
+        return self.hidden
+
+    def __iter__(self):
+        """Generator for iterating over the graphs."""
+        yield from self.graphs()
+
+    @property
+    def hash_to_index(self) -> Dict[int, int]:
+        """  A read-only dictionary mapping hash values to their respective indices.
         :return:
         """
+        return self._hash_to_index.copy()
 
-        for g in self._pyg_data:
-            # print("Label", g.label)
-            label_map = {n: l for n, l in zip(g.node_hash, g.label)}
-            g.label = torch.tensor(g.node_hash, dtype=torch.long)
-            g.y = torch.tensor(g.node_hash, dtype=torch.long)
-            # node_labels = [label_map[n] for n in g.node_hash]
-            # g.y = g.x[:, -1].long()
-            g.hidden_channels = torch.zeros((g.num_nodes, self.hidden_feature_size))
+    @property
+    def index_to_hash(self) -> Dict[int, int]:
+        """  A read-only dictionary mapping indices to their respective hash values.
+        :return:
+        """
+        return self._index_to_hash.copy()
 
-            num_nodes = g.num_nodes
-            hidden_channels = torch.zeros(num_nodes, self.hidden_feature_size)
-            g.hidden_channels = hidden_channels
+    @property
+    def notes_to_hash(self):
+        """ A read-only dictionary mapping MIDI notes to their respective hash values.
+        :return:
+        """
+        return self._notes_to_hash.copy()
 
-            # g = nx.convert_node_labels_to_integers(g)
-            # for i, (_, node_attr) in enumerate(g.nodes(data=True)):
-            #     node_attr["label"] = label_dict[i]
-            # pyg_data = from_networkx(g)
+    @property
+    def hash_to_notes(self):
+        """ A read-only dictionary mapping hash values to their respective MIDI notes.
+        :return:
+        """
+        return self._hash_to_notes.copy()
+
+    def graphs(self) -> Generator[PygData, None, None]:
+        """Generator that yields the PygData objects for each sub-graph.
+        :return: a generator of PygData objects for each sub-graph
+        """
+        if not self._hash_to_notes:
+            raise ValueError("hash_to_notes is empty")
+
+        # allocate idx for each hash value.
+        index = 0
+        for node_hash in self._hash_to_notes:
+            if node_hash not in self.hash_to_index:
+                self._hash_to_index[node_hash] = index
+                self._index_to_hash[index] = node_hash
+                index += 1
+
+        for g in self._pyg_data or []:
+            node_hash = [self.hash_to_index[node_hash] for node_hash in g.node_hash]
+            target_indices = [self.hash_to_index[hash_val] for hash_val in g.node_hash]
+            g.label = torch.tensor(node_hash, dtype=torch.long)
+            g.y = torch.tensor(target_indices, dtype=torch.long)
+
+            # reverse sanity-check
+            original_labels = [self._index_to_hash[label.item()] for label in g.label]
+            original_target_indices = [self._index_to_hash[index] for index in target_indices]
+            original_y_values = [self._index_to_hash[y.item()] for y in g.y]
+            original_notes = [self._hash_to_notes[h] for h in original_labels]
+            for h in original_labels:
+                assert h in self._hash_to_notes, f"Note {h} is not in self.hash_to_notes."
+            for h in original_target_indices:
+                assert h in self._hash_to_notes, f"hash {hash} is not in self.hash_to_notes."
+            for h in original_y_values:
+                assert h in self._hash_to_notes, f"hash {hash} is not in self.hash_to_notes."
+
+            for note in original_notes:
+                if isinstance(note, frozenset):
+                    assert note in self._notes_to_hash, f"Note {note} is not in hash."
 
             yield g
+
+            del self._pyg_data[:]
+            del self._sub_graphs[:]
+            self._pyg_data = []
+            self._sub_graphs = []
 
         @classmethod
         def from_file(cls, file_path: str,
@@ -470,3 +545,54 @@ class MidiGraphBuilder:
             midi_sequences = MidiNoteSequences(midi_seq=midi_sequence)
             return cls(midi_sequences, per_instrument, hidden_feature_size)
 
+        def note_to_class():
+            """
+            :return:
+            """
+            hash_to_index = {}
+            index = 0
+            for node_hash in unique_hash_values:
+                if node_hash not in hash_to_index:
+                    hash_to_index[node_hash] = index
+                    index += 1
+
+        # for k in sorted_keys:
+        #     notes = data[k]
+        #
+        #     if last_node_hash is None:
+        #         midi_graph.add_node(new_node_hash, attr=new_x, label=new_node_hash, node_hash=new_node_hash)
+        #         last_node_hash = new_node_hash
+        #         last_node_name = pitch_names
+        #     else:
+        #         # Add self-loop for the last node if it's a hash
+        #         if isinstance(last_node_hash, int) and midi_graph.has_node(last_node_hash):
+        #             if not midi_graph.has_edge(last_node_hash, last_node_hash):
+        #                 midi_graph.add_edge(last_node_hash, last_node_hash, weight=1.0)
+        #             else:
+        #                 midi_graph[last_node_hash][last_node_hash]['weight'] += 1
+        #
+        #         # If the new node is already connected to the last node, update the weight
+        #         if midi_graph.has_edge(last_node_hash, new_node_hash):
+        #             midi_graph[last_node_hash][new_node_hash]['weight'] += 1
+        #         else:
+        #             midi_graph.add_node(new_node_hash, attr=new_x, label=pitch_names, node_hash=new_node_hash)
+        #             midi_graph.add_edge(last_node_hash, new_node_hash, weight=1.0)
+        #         last_node_hash = new_node_hash
+        #         last_node_name = pitch_names
+
+        # def __iter__(self):
+        #     """Return an iterator over the keys sorted in ascending order."""
+        #     for s in self.midi_sequences:
+        #         g = self.build_sequence(
+        #             self.midi_sequences[s],
+        #             default_trim_time=self.default_trim_time,
+        #             self.max_vector_size=max_vector_size,
+        #             velocity_num_buckets=velocity_num_buckets,
+        #             node_attr_type=node_attr_type,
+        #             is_debug=is_debug
+        #         )
+        #
+        #         # g = nx.convert_node_labels_to_integers(g)
+        #         pyg_data = self.from_midi_networkx(g)
+        #         self._pyg_data.append(pyg_data)
+        #         self._sub_graphs.append(g)

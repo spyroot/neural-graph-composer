@@ -218,7 +218,7 @@ class CustomPrettyMIDI(pretty_midi.PrettyMIDI):
             if event.type == 'key_signature':
                 key_obj = KeySignature(
                     key_name_to_key_number(event.key),
-                    self.tick_to_time[event.time])
+                    self.tick_times[event.time])
 
                 self.key_signature_changes.append(key_obj)
             # time_signature

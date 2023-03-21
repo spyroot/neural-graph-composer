@@ -17,16 +17,15 @@ import numpy as np
 from mido import MidiFile
 from pretty_midi import pretty_midi, Instrument
 
-from .custom_pretty_midi import CustomPrettyMIDI
-from .midi.abstract_midi_reader import MidiBaseReader
-from .midi.midi_control_change import MidiControlChange
+from .midi.midi_spec import DEFAULT_PPQ
 from .midi.midi_note import MidiNote
 from .midi.midi_pitch_bend import MidiPitchBend
-from .midi.midi_sequence import MidiNoteSequence
 from .midi.midi_sequences import MidiNoteSequences
-from .midi.midi_spec import DEFAULT_PPQ
-from .midi.midi_time_signature import MidiTempoSignature, MidiTimeSignature
+from .midi.abstract_midi_reader import MidiBaseReader
+from .midi.midi_control_change import MidiControlChange
 from .midi.midi_key_signature import MidiKeySignature, KeySignatureType
+from .midi.midi_time_signature import MidiTempoSignature, MidiTimeSignature
+from .custom_pretty_midi import CustomPrettyMIDI
 
 
 class MidiReaderError(Exception):
@@ -264,7 +263,7 @@ class MidiReader(MidiBaseReader):
         # read all instruments and construct midi seq
         # all instruments are merged
         for instrument, instrument_idx, note, seq_id in MidiReader.read_instrument(midi_seqs, midi_data):
-            current_seq = midi_seqs.get_instrument(
+            current_seq = midi_seqs.get_track(
                 seq_id, instrument.name, instrument.program, instrument.is_drum)
             # read
             num, denom = midi_seqs.time_signature(note.start)
