@@ -275,3 +275,179 @@ class Test(TestCase):
         self.assertGreater(midi_data4, midi_data3)
         self.assertGreater(midi_data3, midi_data2)
         self.assertGreater(midi_data2, midi_data1)
+
+    def test_insert(self):
+        # Create a MidiNoteSequence object with some notes
+        notes = [
+            MidiNote(pitch=60, velocity=100, start_time=0, end_time=1),
+            MidiNote(pitch=64, velocity=100, start_time=0, end_time=2),
+        ]
+        seq = MidiNoteSequence(notes=notes, instrument=1)
+
+        # Insert a new note
+        new_note = MidiNote(pitch=67, velocity=100, start_time=1.5, end_time=2)
+        seq.insert(new_note)
+
+        # Check that the note was inserted at the correct position
+        self.assertEqual(len(seq.notes), 3)
+        self.assertEqual(seq.notes[0], MidiNote(pitch=60, velocity=100, start_time=0, end_time=1))
+        self.assertEqual(seq.notes[1], MidiNote(pitch=64, velocity=100, start_time=0, end_time=2))
+        self.assertEqual(seq.notes[2], MidiNote(pitch=67, velocity=100, start_time=1.5, end_time=2))
+
+    def test_insert02(self):
+        # Create a MidiNoteSequence object with some notes
+        notes = [
+            MidiNote(pitch=60, velocity=100, start_time=0, end_time=1),
+            MidiNote(pitch=64, velocity=100, start_time=0, end_time=2),
+            MidiNote(pitch=67, velocity=100, start_time=1, end_time=3)
+        ]
+
+        seq = MidiNoteSequence(notes=notes, instrument=1)
+        self.assertEqual(len(seq.notes), 3)
+
+        # Insert a note at the beginning of the sequence
+        new_note1 = MidiNote(pitch=62, velocity=100, start_time=0, end_time=1)
+        seq.insert(new_note1)
+        self.assertEqual(len(seq.notes), 4)
+        self.assertEqual(seq.notes[0], new_note1)
+
+        # Insert a note in the middle of the sequence
+        new_note2 = MidiNote(pitch=66, velocity=100, start_time=0.5, end_time=1.5)
+        seq.insert(new_note2)
+        self.assertEqual(len(seq.notes), 5)
+        self.assertEqual(seq.notes[2], new_note2)
+
+        # Insert a note at the end of the sequence
+        new_note3 = MidiNote(pitch=69, velocity=100, start_time=3, end_time=4)
+        seq.insert(new_note3)
+        self.assertEqual(len(seq.notes), 6)
+        self.assertEqual(seq.notes[5], new_note3)
+
+        # Insert a note that starts before the first note
+        new_note4 = MidiNote(pitch=71, velocity=100, start_time=-1, end_time=0.5)
+        seq.insert(new_note4)
+        self.assertEqual(len(seq.notes), 7)
+        self.assertEqual(seq.notes[0], new_note4)
+
+        # Insert a note that starts after the last note
+        new_note5 = MidiNote(pitch=72, velocity=100, start_time=4, end_time=5)
+        seq.insert(new_note5)
+        self.assertEqual(len(seq.notes), 8)
+        self.assertEqual(seq.notes[7], new_note5)
+
+        # Insert a note that has the same start time as an existing note
+        new_note6 = MidiNote(pitch=74, velocity=100, start_time=1, end_time=2)
+        seq.insert(new_note6)
+        self.assertEqual(len(seq.notes), 9)
+        self.assertIn(new_note6, seq.notes)
+
+    def test_truncate(self):
+        # Create a MidiNoteSequence object with some notes
+        notes = [
+            MidiNote(pitch=60, velocity=100, start_time=0.0, end_time=1.0),
+            MidiNote(pitch=64, velocity=100, start_time=0.0, end_time=2.0),
+            MidiNote(pitch=67, velocity=100, start_time=1.0, end_time=3.0)
+        ]
+
+        seq = MidiNoteSequence(notes=notes, instrument=1)
+        self.assertEqual(len(notes), 3)
+
+        # truncate the sequence to end at time 2
+        truncated_seq = seq.truncate(2.0)
+        print(truncated_seq)
+        self.assertEqual(len(truncated_seq.notes), 2)
+        print(truncated_seq.notes)
+
+        self.assertEqual(truncated_seq.notes[0], MidiNote(pitch=60, velocity=100, start_time=0.0, end_time=1.0))
+        self.assertEqual(truncated_seq.notes[1], MidiNote(pitch=64, velocity=100, start_time=0.0, end_time=2.0))
+
+        # Check that the original sequence was not modified
+        self.assertEqual(len(seq.notes), 3)
+        self.assertEqual(truncated_seq.notes[0], MidiNote(pitch=60, velocity=100, start_time=0, end_time=1))
+        self.assertEqual(seq.notes[1], MidiNote(pitch=64, velocity=100, start_time=0.0, end_time=2.0))
+        self.assertEqual(seq.notes[2], MidiNote(pitch=67, velocity=100, start_time=1.0, end_time=3.0))
+
+    def test_cut_in_place(self):
+        # Create a MidiNoteSequence object with some notes
+        notes = [
+            MidiNote(pitch=60, velocity=100, start_time=0, end_time=1),
+            MidiNote(pitch=64, velocity=100, start_time=0, end_time=2),
+            MidiNote(pitch=67, velocity=100, start_time=1, end_time=3)
+        ]
+
+        seq = MidiNoteSequence(notes=notes, instrument=1)
+        self.assertEqual(len(seq.notes), 3)
+
+        # Cut the sequence in place
+        seq.cut_in_place(2)
+
+        # Check that the sequence was truncated correctly
+        self.assertEqual(len(seq.notes), 2)
+        self.assertEqual(seq.notes[0], MidiNote(pitch=60, velocity=100, start_time=0, end_time=1))
+        self.assertEqual(seq.notes[1], MidiNote(pitch=64, velocity=100, start_time=0, end_time=2))
+
+    def test_cut(self):
+        # Create a MidiNoteSequence object with some notes
+        notes = [
+            MidiNote(pitch=60, velocity=100, start_time=0, end_time=1),
+            MidiNote(pitch=64, velocity=100, start_time=0, end_time=2),
+            MidiNote(pitch=67, velocity=100, start_time=1, end_time=3)
+        ]
+
+        seq = MidiNoteSequence(notes=notes, instrument=1)
+        self.assertEqual(len(seq.notes), 3)
+
+        # Cut the sequence
+        truncated_seq = seq.cut(2)
+
+        # Check that the original sequence was not modified
+        self.assertEqual(len(seq.notes), 3)
+        self.assertEqual(seq.notes[0], MidiNote(pitch=60, velocity=100, start_time=0, end_time=1))
+        self.assertEqual(seq.notes[1], MidiNote(pitch=64, velocity=100, start_time=0, end_time=2))
+        self.assertEqual(seq.notes[2], MidiNote(pitch=67, velocity=100, start_time=1, end_time=3))
+
+        # Check that the truncated sequence is correct
+        self.assertEqual(len(truncated_seq.notes), 2)
+        self.assertEqual(truncated_seq.notes[0], MidiNote(pitch=60, velocity=100, start_time=0, end_time=1))
+        self.assertEqual(truncated_seq.notes[1], MidiNote(pitch=64, velocity=100, start_time=0, end_time=2))
+        self.assertEqual(truncated_seq.total_time, 2.0)
+
+    def test_merge(self):
+        notes1 = [
+            MidiNote(pitch=60, velocity=100, start_time=0, end_time=1, instrument=1),
+            MidiNote(pitch=64, velocity=100, start_time=0, end_time=2, instrument=1),
+            MidiNote(pitch=67, velocity=100, start_time=1, end_time=3, instrument=1)
+        ]
+
+        notes2 = [
+            MidiNote(pitch=72, velocity=100, start_time=0, end_time=1.5, instrument=1),
+            MidiNote(pitch=76, velocity=100, start_time=0, end_time=3, instrument=1),
+            MidiNote(pitch=79, velocity=100, start_time=1, end_time=4, instrument=1)
+        ]
+
+        seq1 = MidiNoteSequence(notes=notes1, instrument=1)
+        seq2 = MidiNoteSequence(notes=notes2, instrument=1)
+
+        seq1.merge(seq2)
+
+        expected_notes = [
+            MidiNote(pitch=60, velocity=100, start_time=0, end_time=1, instrument=1),
+            MidiNote(pitch=64, velocity=100, start_time=0, end_time=2, instrument=1),
+            MidiNote(pitch=72, velocity=100, start_time=0, end_time=1.5, instrument=1),
+            MidiNote(pitch=67, velocity=100, start_time=1, end_time=3, instrument=1),
+            MidiNote(pitch=76, velocity=100, start_time=0, end_time=3, instrument=1),
+            MidiNote(pitch=79, velocity=100, start_time=1, end_time=4, instrument=1)
+        ]
+
+        self.assertEqual(len(seq1.notes), 6)
+        self.assertListEqual(seq1.notes, expected_notes)
+        self.assertEqual(seq1.total_time, 4)
+        self.assertEqual(seq1.instrument, 1)
+
+
+
+
+
+
+
+

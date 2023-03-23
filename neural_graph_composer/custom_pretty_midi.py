@@ -68,8 +68,8 @@ class CustomPrettyMIDI(pretty_midi.PrettyMIDI):
             # Empty lyrics list
             self.lyrics = []
 
-            print(f"Done constructing tick scales "
-                  f"{initial_tempo} {resolution} {self._tick_scales} len {self.__tick_to_time}")
+            # print(f"Done constructing tick scales "
+            #       f"{initial_tempo} {resolution} {self._tick_scales} len {self.__tick_to_time}")
 
     def from_file(self, midi_file):
         """
@@ -95,7 +95,6 @@ class CustomPrettyMIDI(pretty_midi.PrettyMIDI):
                 tick = event.time
 
         self.resolution = midi_data.ticks_per_beat
-        print(f"mido resolution {self.resolution}")
         self._load_tempo_changes(midi_data)
 
         # Update the array which maps ticks to time

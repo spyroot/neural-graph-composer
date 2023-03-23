@@ -9,7 +9,7 @@ Author Mus spyroot@gmail.com
 import logging
 from collections import defaultdict
 from enum import auto, Enum
-from typing import Optional, Generator, Dict
+from typing import Optional, Generator, Dict, Tuple
 from typing import Union, List, Any
 
 import librosa
@@ -45,11 +45,11 @@ class MidiGraphBuilder:
 
     def __init__(self,
                  midi_data: Union[MidiNoteSequence, MidiNoteSequences, Generator[MidiNoteSequence, None, None]] = None,
-                 per_instrument: Optional[bool] = True,
+                 is_instrument_graph: Optional[bool] = True,
                  hidden_feature_size: int = 64):
         """
         :param midi_data: midi_sequences object
-        :param per_instrument:  Will build graph for each instrument.
+        :param is_instrument_graph:  Will build graph for each instrument.
         """
         if midi_data is not None:
             if isinstance(midi_data, MidiNoteSequence):
@@ -75,16 +75,12 @@ class MidiGraphBuilder:
         #
         self.hidden_feature_size = hidden_feature_size
         #
-        self.pre_instrument = per_instrument
+        self.pre_instrument = is_instrument_graph
         # if per_instrument is true and number of instrument is > 0 each wil have own graph
         self._pyg_data = []
         # all sub graph for a same midi populate here.
         self._sub_graphs = []
         self.midi_sequences = midi_data
-        #
-        self.pre_instrument = per_instrument
-
-
 
     @property
     def sub_graphs(self) -> List[Graph]:
@@ -261,9 +257,15 @@ class MidiGraphBuilder:
               default_trim_time: Optional[int] = 3,
               max_vector_size: Optional[int] = 5,
               velocity_num_buckets: Optional[int] = 8,
-              node_attr_type: NodeAttributeType = NodeAttributeType.Tensor):
+              node_attr_type: NodeAttributeType = NodeAttributeType.Tensor,
+              filter_single_notes: Optional[bool] = False,
+              tolerance: float = 0.2,
+              is_per_instrument: Optional[bool] = True):
         """
          Build a graph for one or more midi sequences.
+        :param is_per_instrument: if False all instrument add to a single larger graph.
+        :param tolerance:
+        :param filter_single_notes:
         :param midi_seqs: A  MidiNoteSequence objects, If `None`, use the sequences passed to the constructor.
         :param default_trim_time: The time resolution to use for each note. For  example,
                                  if `default_trim_time=3`, notes played at `0.001` and`0.00001`
@@ -290,16 +292,24 @@ class MidiGraphBuilder:
             raise TypeError("velocity_num_buckets must be an integer")
 
         _midi_seq = midi_seqs if midi_seqs is not None else self.midi_sequences
+        large_graph = None
+
+        total_nodes = 0
 
         for s in _midi_seq:
-            print(midi_seqs[s].instrument)
-            print(f"number of notes {len(midi_seqs[s].notes)}")
             g = self.build_sequence(
                 _midi_seq[s],
                 default_trim_time=default_trim_time,
                 max_vector_size=max_vector_size,
-                velocity_num_buckets=velocity_num_buckets, node_attr_type=node_attr_type,
+                velocity_num_buckets=velocity_num_buckets,
+                node_attr_type=node_attr_type,
+                filter_single_notes=filter_single_notes,
+                tolerance=tolerance,
+                g=large_graph if not is_per_instrument else None
             )
+
+            logging.debug(f"Number of nodes: {len(g.nodes)}, "
+                          f"Number of edges: {len(g.edges)}")
 
             if not g.nodes:
                 continue
@@ -313,22 +323,112 @@ class MidiGraphBuilder:
             if not has_attrs:
                 logging.warning("Not all nodes have 'label' attribute in the graph.")
 
-            # g = nx.convert_node_labels_to_integers(g)
-            pyg_data = self.from_midi_networkx(g)
+            # for each instrument construct graph
+            if is_per_instrument:
+                pyg_data = self.from_midi_networkx(g)
+                self._pyg_data.append(pyg_data)
+                self._sub_graphs.append(g)
+                delta_nodes = len(g.nodes)
+                total_nodes += delta_nodes
+            else:
+                # otherwise append to existing graph
+                if large_graph is None:
+                    large_graph = g
+                    delta_nodes = len(g.nodes)
+                    total_nodes += delta_nodes
+                else:
+                    num_existing_nodes = len(large_graph.nodes)
+                    large_graph = nx.compose(large_graph, g)
+                    delta_nodes = len(large_graph.nodes) - num_existing_nodes
+                    total_nodes += delta_nodes
+
+            logging.debug(f"Added {delta_nodes} new nodes to the "
+                          f"graph, total number of nodes: {total_nodes}.")
+
+        if not is_per_instrument and large_graph is not None:
+            pyg_data = self.from_midi_networkx(large_graph)
             self._pyg_data.append(pyg_data)
-            self._sub_graphs.append(g)
+            self._sub_graphs.append(large_graph)
+
+        logging.debug(f"Total number of nodes in the dataset: {total_nodes}.")
+
+
+    @staticmethod
+    def same_start_time(n, tolerance=1e-6):
+        return abs(n.start_time - n.start_time) < tolerance
+
+    @staticmethod
+    def compute_data(seq: MidiNoteSequence,
+                     tolerance: float,
+                     filter_single_notes: bool) -> Tuple[Dict[float, List[MidiNote]], int]:
+        """Compute the dictionary 'data', which maps start times to lists
+        of notes for a given MidiNoteSequence, and compute the length of the longest
+        sequence of notes played at the same time.
+        """
+        data = {}
+        longest_note_sequence = 0
+        for n in seq.notes:
+            # all drum are skipped, we only care about instrument that produce harmony
+            if n.is_drum or n.velocity == 0:
+                continue
+            time_hash = round(n.start_time / tolerance) * tolerance
+            if time_hash not in data:
+                data[time_hash] = []
+
+            data[time_hash].append(n)
+            if len(data[time_hash]) > longest_note_sequence:
+                longest_note_sequence = len(data[time_hash])
+
+        if filter_single_notes:
+            # Filter out single notes
+            data = {k: notes for k, notes in data.items() if len(notes) > 1}
+
+        return data, longest_note_sequence
+
+    @staticmethod
+    def create_tensor(node_attr_type, pitch_set, max_vector_size):
+        """Create tensor for each node..
+        :param node_attr_type:
+        :param pitch_set:
+        :param max_vector_size:
+        :return:
+        """
+        if node_attr_type == NodeAttributeType.Tensor:
+            pitch_attr = torch.FloatTensor(list(pitch_set))
+            if pitch_attr.shape[0] > max_vector_size:
+                pitch_attr = pitch_attr[:max_vector_size]
+            new_x = torch.zeros(max_vector_size)
+            new_x[:pitch_attr.shape[0]] = pitch_attr
+            # print(new_x)
+            # new_x = torch.zeros(max_vector_size)
+            # new_x[:pitch_attr.shape[0]] = pitch_attr
+        elif node_attr_type == NodeAttributeType.OneHotTensor:
+            labels_tensor = torch.FloatTensor(list(pitch_set))
+            new_x = torch.nn.functional.one_hot(labels_tensor, num_classes=127)
+        else:
+            raise ValueError("Unknown encoder type")
+
+        return new_x
 
     def build_sequence(
             self,
             seq: MidiNoteSequence,
-            default_trim_time: Optional[int] = 3,
-            max_vector_size: Optional[int] = 5,
+            default_trim_time: Optional[int] = 12,
+            max_vector_size: Optional[int] = 12,
             velocity_num_buckets: Optional[int] = 8,
-            node_attr_type: NodeAttributeType = NodeAttributeType.Tensor):
+            node_attr_type: NodeAttributeType = NodeAttributeType.Tensor,
+            filter_single_notes: bool = False,
+            tolerance: float = 0.2,
+            g: Optional[nx.DiGraph] = None) -> nx.DiGraph:
+
         """Build a graph for single midi sequence for particular instrument.
         If we need merge all instrument to a single graph, caller
         need use build method that will merge all graph to a single large graph.
 
+        :param g:
+        :param filter_single_notes: filter out single notes if True, otherwise include them in the graph
+        :param tolerance:
+        :param filter_single_notes:
         :param node_attr_type: dictates how we want re-present a node attribute.
                                as Tensor fixed size or as One hot vector
         :param max_vector_size: dictate a maximum size of tensor.
@@ -345,45 +445,42 @@ class MidiGraphBuilder:
             raise TypeError(f"midi_sequences must be an instance of "
                             f"MidiNoteSequence but received {type(seq)}")
 
-        # sort all pitches played at same time.
-        # we truncated float time. Long notes that span different chord
-        # will be present in different node, and it ok
-        data = {}
-        # read seq of notes and form a hash list where
-        # key is start time and value a note.
-        longest_note_sequence = 0
-        for n in seq.notes:
-            # all drum are skipped, we only care about instrument
-            # produce harmony and velocity > 0
-            if n.is_drum or n.velocity == 0:
-                continue
-            time_hash = round(n.start_time, default_trim_time)
-            if time_hash not in data:
-                data[time_hash] = []
-            data[time_hash].append(n)
-            if len(data[time_hash]) > longest_note_sequence:
-                longest_note_sequence = len(data[time_hash])
+        data, longest_note_sequence = self.compute_data(seq, tolerance, filter_single_notes)
+        if not data:
+            if g is None:
+                return nx.DiGraph()
+            else:
+                return g
 
-        # sort by time
         sorted_keys = list(data.keys())
         sorted_keys.sort()
         if not sorted_keys:
-            return nx.DiGraph()
+            if g is None:
+                return nx.DiGraph()
+            else:
+                return g
 
         # Create directed graph.
         #  - a chord that already played will point itself.
         #    i.e. if we play chord 5 time it edge to self with respected weight
         # -  next chord that play after prev time step connected back to chord at t-1
         #    note we don't care about time, we only care how chords connected
-        midi_graph = nx.DiGraph()
-        last_node_hash = None
-        last_node_name = ""
-        mapping = {}
+        if g is None:
+            midi_graph = nx.DiGraph()
+            last_node_hash = None
+        else:
+            midi_graph = g
+            last_node_hash = list(g.nodes())[-1]
 
+        mapping = {}
         # For each chord that hold set of pitches.
         # ie notes played same time form a node.
+        node_weights = {}
         for k in sorted_keys:
+            if k not in data:
+                continue
             notes = data[k]
+
             # a pitch a set of pitches and velocity for each pitch
             pitch_set = frozenset(n.pitch for n in notes)
             pitch_vel_set = frozenset(n.velocity // velocity_num_buckets for n in notes)
@@ -404,29 +501,35 @@ class MidiGraphBuilder:
             if node_attr_type not in self.ENCODINGS:
                 raise ValueError("Unknown encoder type")
 
-            if node_attr_type == NodeAttributeType.Tensor:
-                pitch_attr = torch.FloatTensor(list(pitch_set))
-                new_x = torch.zeros(max_vector_size)
-                new_x[:pitch_attr.shape[0]] = pitch_attr
-            elif node_attr_type == NodeAttributeType.OneHotTensor:
-                labels_tensor = torch.FloatTensor(list(pitch_set))
-                new_x = torch.nn.functional.one_hot(labels_tensor, num_classes=127)
-            else:
-                raise ValueError("Unknown encoder type")
-
+            new_x = self.create_tensor(node_attr_type, pitch_set, max_vector_size)
             if last_node_hash is None:
                 midi_graph.add_node(new_node_hash, attr=new_x, label=new_node_hash, node_hash=new_node_hash)
-                last_node_hash = new_node_hash
-                last_node_name = pitch_names
             else:
                 # if node already connected update weight
+                # print(f" checking connectivity {self.hash_to_notes[new_node_hash]} {self.hash_to_notes[last_node_hash]}")
                 if midi_graph.has_edge(new_node_hash, last_node_hash):
-                    midi_graph[new_node_hash][last_node_hash]['weight'] += 1
+                    # print(f" update edge {self.hash_to_notes[new_node_hash]} {self.hash_to_notes[last_node_hash]}")
+                    midi_graph[new_node_hash][last_node_hash]['weight'] += 1.0
+                    # node_weights[new_node_hash][last_node_hash] += 1.0
+                elif midi_graph.has_edge(last_node_hash, new_node_hash):
+                    midi_graph[last_node_hash][new_node_hash]['weight'] += 1.0
+                    # node_weights[last_node_hash][new_node_hash] += 1.0
                 else:
                     midi_graph.add_node(new_node_hash, attr=new_x, label=pitch_names, node_hash=new_node_hash)
+                    # print(f" adding edge {self.hash_to_notes[new_node_hash]} {self.hash_to_notes[last_node_hash]}")
                     midi_graph.add_edge(last_node_hash, new_node_hash, weight=1.0)
-                last_node_hash = new_node_hash
-                last_node_name = pitch_names
+                    node_weights[new_node_hash] = {last_node_hash: 1.0}
+
+            last_node_hash = new_node_hash
+
+        # Update the weights of the edges in the graph
+        # node_hashes = list(self._notes_to_hash.values())
+        # node_weights = {u: {v: 0 for v in node_hashes} for u in node_hashes}
+
+        # Set the node attributes based on the chosen encoder
+        if node_attr_type == NodeAttributeType.OneHotTensor:
+            for node in midi_graph.nodes:
+                midi_graph.nodes[node]["attr"] = midi_graph.nodes[node]["attr"]
 
         # midi_graph = nx.relabel_nodes(midi_graph, mapping)
         return midi_graph
@@ -441,7 +544,7 @@ class MidiGraphBuilder:
 
     @property
     def hash_to_index(self) -> Dict[int, int]:
-        """  A read-only dictionary mapping hash values to their respective indices.
+        """ A read-only dictionary mapping hash values to their respective indices.
         :return:
         """
         return self._hash_to_index.copy()
@@ -544,17 +647,6 @@ class MidiGraphBuilder:
             """
             midi_sequences = MidiNoteSequences(midi_seq=midi_sequence)
             return cls(midi_sequences, per_instrument, hidden_feature_size)
-
-        def note_to_class():
-            """
-            :return:
-            """
-            hash_to_index = {}
-            index = 0
-            for node_hash in unique_hash_values:
-                if node_hash not in hash_to_index:
-                    hash_to_index[node_hash] = index
-                    index += 1
 
         # for k in sorted_keys:
         #     notes = data[k]

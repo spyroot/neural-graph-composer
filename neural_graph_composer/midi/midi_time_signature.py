@@ -179,8 +179,8 @@ class MidiTimeSignature(MidiSeq):
 
     def __init__(self,
                  midi_time: Optional[float] = 0.0,
-                 denominator: Optional[int] = 4,
-                 numerator: Optional[int] = 4) -> None:
+                 numerator: Optional[int] = 4,
+                 denominator: Optional[int] = 4) -> None:
         """Initialize a new `MidiTimeSignature` object.
         :param midi_time: The time in seconds at which the time signature takes effect.
         :param denominator: The denominator of the time signature as notated on sheet music. Default value is 4.

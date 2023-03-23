@@ -184,7 +184,7 @@ class MidiReader(MidiBaseReader):
             seq_id = midi_seq.create_track(i, instrument.program, instrument.name, instrument.is_drum)
             # for each instrument iterate over all node and get time
             for n in instrument.pitch_bends:
-                if not midi_seq.total_time or n.end >= midi_seq.total_time:
+                if not midi_seq.total_time or n.time >= midi_seq.total_time:
                     yield instrument, i, n, seq_id
 
     @staticmethod

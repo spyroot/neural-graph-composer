@@ -28,7 +28,6 @@ class TestMidiGraphBuilder(unittest.TestCase):
     class TestMidiReader(unittest.TestCase):
         def test_from_file(self):
             # Create a mock MidiBaseReader
-            mock_reader = Mock()
             mock_reader.read.return_value = MidiNoteSequence()
 
             # Create a test MIDI file

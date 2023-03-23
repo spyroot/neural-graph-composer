@@ -21,7 +21,7 @@ class Test(TestCase):
         :return:
         """
         midi_seq = MidiNoteSequence.from_file('example.mid')
-        builder = MidiGraphBuilder(midi_seq, per_instrument=False)
+        builder = MidiGraphBuilder(midi_seq, __is_instrument_graph=False)
         pyg_data = builder.pyg_data
 
         # Assert that we have only one graph
@@ -29,6 +29,7 @@ class Test(TestCase):
 
         # Assert that the graph contains the correct number of nodes
         self.assertEqual(pyg_data[0].x.shape[0], len(midi_seq))
+
     def test_add_self_loop(self):
         """Add two note and construct graph.
            - Make sure it directed.
@@ -100,7 +101,7 @@ class Test(TestCase):
         self.assertTrue(nx.is_weighted(midi_graph))
         self.assertTrue(len(midi_graph.nodes) == 1)
         self.assertTrue(len(midi_graph.edges) == 1)
-        self.assertTrue(len(midi_graph_builder.hash_to_midi_set) == 1)
+        self.assertTrue(len(midi_graph_builder._notes_to_hash) == 1)
 
         edge = MidiGraphBuilder.get_edge_connected(
             midi_graph, u=[b.pitch], v=[a.pitch]

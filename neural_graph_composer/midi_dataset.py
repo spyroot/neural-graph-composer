@@ -3,7 +3,7 @@ import logging
 import os
 import os.path as osp
 import shutil
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Callable
 from pathlib import Path
 
 import numpy as np
@@ -16,6 +16,8 @@ from .midi_reader import MidiReader
 from torch_geometric.data import InMemoryDataset, download_url, extract_zip
 
 from torch.utils.data import Dataset
+from torch_geometric.data import Data
+from torch_geometric.loader import DataLoader
 
 
 class NodeHashIndexMapper:
@@ -65,11 +67,12 @@ class MidiDataset(InMemoryDataset):
 
 
     """
-    def __init__(self, root,
-                 transform=None,
-                 pre_transform=None,
-                 pre_filter=None,
-                 default_node_attr='attr',
+    def __init__(self,
+                 root,
+                 transform: Optional[Callable] = None,
+                 pre_transform: Optional[Callable] = None,
+                 pre_filter: Optional[Callable] = None,
+                 default_node_attr: str = 'attr',
                  file_names: Optional[List[str]] = None,
                  default_webserver: Optional[str] = 'http://localhost:9000',
                  train_ratio: Optional[float] = 0.7,
@@ -113,12 +116,15 @@ class MidiDataset(InMemoryDataset):
         self.logger = logging.getLogger(__name__ + '.' + self.__class__.__name__)
         self.logger.setLevel(logging.WARNING)
 
+        # root = osp.expanduser(osp.normpath(root))
+        # self.root = root
+
         self.__url = default_webserver
         self.__node_attr_name = default_node_attr
         self.__train_ratio = train_ratio
         self.__val_ratio = val_ratio
-        self.__per_instrument_graph = per_instrument_graph
-        self.__per_graph_slit = per_graph_slit
+        self.__is_instrument_graph = per_instrument_graph
+        self.__mask_instruments = per_graph_slit
         self.__hidden_channels = 64
         self.__node_attr_name = default_node_attr
         # self.__dataset_length = len(self.__data_list)
@@ -126,11 +132,18 @@ class MidiDataset(InMemoryDataset):
 
         self.data_list = None
         self.__data_list = None
-
         self._graph_builder = None
 
+        self._num_instruments = {}
+
+        print(f"default_node_attr: {self.__train_ratio}")
+        print(f"transform: {self.__val_ratio}")
+        print(f"per_instrument_graph: {self.__is_instrument_graph}")
+        print(f"pre_filter: {pre_filter}")
         super().__init__(root, transform, pre_transform, pre_filter)
-        print(f"Using process path {self.processed_paths[0]}")
+
+        for path in self.processed_paths:
+            print(f"Using processed data at {path}")
 
         # all read-only properties
         self._notes_to_hash = {}
@@ -140,16 +153,18 @@ class MidiDataset(InMemoryDataset):
 
         self.__num_classes = None
         if self.processed_file_exists():
-            out = torch.load(self.processed_paths[0])
-            if not isinstance(out, tuple) or len(out) != 3:
-                raise RuntimeError("The 'data' object must a tuple.")
-            self.data, self.slices, additional_data = out
-            self.__total_num_classes = len(torch.unique(self.data.y))
-
-            self._notes_to_hash = additional_data['hash_to_notes']
-            self._hash_to_notes = additional_data['notes_to_hash']
-            self._hash_to_index = additional_data['hash_to_index']
-            self._index_to_hash = additional_data['index_to_hash']
+            self.load_processed()
+        else:
+            print("File not found.")
+            # out = torch.load(self.processed_paths[0])
+            # if not isinstance(out, tuple) or len(out) != 3:
+            #     raise RuntimeError("The 'data' object must a tuple.")
+            # self.data, self.slices, additional_data = out
+            # self.__total_num_classes = len(torch.unique(self.data.y))
+            # self._notes_to_hash = additional_data['hash_to_notes']
+            # self._hash_to_notes = additional_data['notes_to_hash']
+            # self._hash_to_index = additional_data['hash_to_index']
+            # self._index_to_hash = additional_data['index_to_hash']
 
     @property
     def hash_to_index(self) -> Dict[int, int]:
@@ -180,22 +195,44 @@ class MidiDataset(InMemoryDataset):
         return self._hash_to_notes.copy()
 
     def load_processed(self):
-        """
+        """Load the processed data from disk,  depending on the flag.
         :return:
         """
-        data = torch.load(self.processed_paths[0])
-        if not isinstance(data, tuple) or len(data) != 2:
+        print("Loading processed")
+
+        if self.__is_instrument_graph:
+            print(f"Loading {self.processed_dir} per_instrument_data.pt")
+            data_path = osp.join(self.processed_dir, 'per_instrument_data.pt')
+        else:
+            print(f"Loading {self.processed_dir} data.pt")
+            data_path = osp.join(self.processed_dir, 'data.pt')
+
+        data = torch.load(data_path)
+        if not isinstance(data, tuple) or len(data) != 3:
             raise RuntimeError("The 'data' object must be a tuple.")
 
         self.data, self.slices, additional_data = data
         self.__num_classes = len(torch.unique(self.data.y))
         self.__data_list = None
 
-        self._notes_to_hash = additional_data['hash_to_notes']
-        self._hash_to_notes = additional_data['notes_to_hash']
+        self._hash_to_notes = additional_data['hash_to_notes']
+        self._notes_to_hash = additional_data['notes_to_hash']
         self._hash_to_index = additional_data['hash_to_index']
         self._index_to_hash = additional_data['index_to_hash']
 
+        self.__dataset_length = len(self.data)
+        self.__num_classes = len(torch.unique(self.data.y))
+        self.__total_num_classes = len(torch.unique(self.data.y))
+
+        print(f"Loaded data from {data_path}")
+        if self._hash_to_notes is not None:
+            print(f"Loaded hash_to_notes with {len(self._hash_to_notes)} entries")
+        if self._notes_to_hash is not None:
+            print(f"Loaded notes_to_hash with {len(self._notes_to_hash)} entries")
+        if self._hash_to_index is not None:
+            print(f"Loaded hash_to_index with {len(self._hash_to_index)} entries")
+        if self._index_to_hash is not None:
+            print(f"Loaded index_to_hash with {len(self._index_to_hash)} entries")
 
     @property
     def graph_builder(self) -> MidiGraphBuilder:
@@ -212,16 +249,30 @@ class MidiDataset(InMemoryDataset):
 
     @property
     def raw_file_names(self):
-        return ['midi_test01.mid', 'midi_test02.mid', 'midi_test03.mid',
-                'a_night_in_tunisia_2_jc.mid', 'autumn_leaves_jpa.mid',
-                'autumn_leaves_pt_dm.mid']
+        """
+        :return:
+        """
+        # module_dir = os.path.dirname(os.path.abspath(__file__))
+        # midi_dir = os.path.join(module_dir, 'data', 'midi')
+        midi_files_dir = '/Users/spyroot/dev/neural-graph-composer/neural_graph_composer/dataset'
+        return [f for f in os.listdir(midi_files_dir)
+                if os.path.isfile(os.path.join(midi_files_dir, f)) and f.endswith('.mid')
+                ]
 
     def processed_file_exists(self):
         """Check if processed file already exists.
         :return: boolean
         """
+        print("Checking files.")
+
         if not osp.exists(self.processed_dir):
             return False
+
+        if self.__is_instrument_graph:
+            processed_files = ['per_instrument_data.pt']
+            # osp.exists(osp.join(self.processed_dir, file_name))
+        else:
+            processed_files = ['data.pt']
 
         # check each file if all processed files exist
         for file_name in self.processed_file_names:
@@ -235,17 +286,17 @@ class MidiDataset(InMemoryDataset):
         """
         :return:
         """
-        files = []
-        p = Path(self.processed_dir)
-        if not p.exists():
-            return files
-
-        for x in os.listdir(self.processed_dir):
-            if x.startswith("data") and x.endswith(".pt"):
-                files.append(x)
-
-        return files
-        # return ['midi_test01.mid.pt', 'midi_test02.mid.pt', 'midi_test03.mid.pt']
+        return ['per_instrument_data.pt', 'data.pt']
+        # files = []
+        # p = Path(self.processed_dir)
+        # if not p.exists():
+        #     return files
+        #
+        # for x in os.listdir(self.processed_dir):
+        #     if x.startswith("data") and x.endswith(".pt"):
+        #         files.append(x)
+        #
+        # return files
 
     def compute_statistics(self):
         """
@@ -268,7 +319,7 @@ class MidiDataset(InMemoryDataset):
         """
         :return: Total number of unique classes across all graphs
         """
-        return len(self.all_classes)
+        return len(self.index_to_hash)
 
     def has_edge_weights(pyg_data, default_key="edge_attr"):
         """
@@ -291,43 +342,39 @@ class MidiDataset(InMemoryDataset):
             if raw_file.endswith(".tar"):
                 extract_tar(path, self.raw_dir)
 
-    def _process_mask_per_graph(self):
-        """Process and mask each graphs
+    def _mask_per_instrument(self):
+        """Process each midi file construct graph per each instrument,
+        create masks each instrument.
         :return:
         """
         if self.__data_list is None:
             self.__data_list = []
+
+        self._graph_builder = MidiGraphBuilder(
+            None, is_instrument_graph=True)
+
+        if self._graph_builder is None:
+            print("Warning: self.graph_builder is None")
 
         for raw_path in self.raw_paths:
             print(f"Reading {raw_path}")
             try:
                 # read file and construct graph
                 midi_seqs = MidiReader.read(raw_path)
-                print(f"midi seq number of seq {midi_seqs.num_instruments()}")
-                # we build per instrument
-                if self._graph_builder is None:
-                    self._graph_builder = MidiGraphBuilder(
-                        None, per_instrument=self.__per_instrument_graph)
-
-                if self._graph_builder is not None:
-                    self._graph_builder.build(midi_seqs)
-                else:
-                    print("Warning: self.graph_builder is None")
-
+                if raw_path not in self._num_instruments:
+                    self._num_instruments[raw_path] = midi_seqs.num_instruments()
                 self._graph_builder.build(midi_seqs)
 
                 # graph_builder output iterator
                 for midi_data in self._graph_builder.graphs():
-
                     self.all_classes.update(torch.unique(midi_data.y).tolist())
-
                     # first we apply pre-filter then apply mask
                     if self.pre_filter is not None and not self.pre_filter(midi_data):
                         continue
 
                     # split mask
                     num_nodes = midi_data.x.size(0)
-                    train_ratio, val_ratio = 0.7, 0.15
+                    train_ratio, val_ratio = self.__train_ratio, self.__val_ratio
                     train_size = int(train_ratio * num_nodes)
                     val_size = int(val_ratio * num_nodes)
 
@@ -356,98 +403,146 @@ class MidiDataset(InMemoryDataset):
         allowing your model to learn and validate on a variety of examples.
         :return:
         """
-        if self.__per_graph_slit:
-            self._process_mask_per_graph()
-        else:
-            self.process_mask_entire_graph()
 
-        self.data, self.slices = self.collate(self.__data_list)
-        self.__dataset_length = len(self.__data_list)
+        if self.processed_file_exists():
+            print(f"Processed files found in {self.processed_dir}. Loading...")
+            self.load_processed()
+            return
 
-        self.__data_list = None
+        self._mask_per_instrument()
 
         # Save additional data to a separate file
-        self._hash_to_notes = self.graph_builder.hash_to_notes
-        self._notes_to_hash = self.graph_builder.notes_to_hash
-        self._hash_to_index = self.graph_builder.hash_to_index
-        self._index_to_hash = self.graph_builder.index_to_hash
-
+        _hash_to_notes = self.graph_builder.hash_to_notes
+        _notes_to_hash = self.graph_builder.notes_to_hash
+        _hash_to_index = self.graph_builder.hash_to_index
+        _index_to_hash = self.graph_builder.index_to_hash
         additional_data = {
-            'hash_to_notes': self.graph_builder.hash_to_notes,
-            'notes_to_hash': self.graph_builder.notes_to_hash,
-            'hash_to_index': self.graph_builder.hash_to_index,
-            'index_to_hash': self.graph_builder.index_to_hash,
+            'hash_to_notes': _hash_to_notes,
+            'notes_to_hash': _notes_to_hash,
+            'hash_to_index': _hash_to_index,
+            'index_to_hash': _index_to_hash,
+        }
+
+        _data, _slices = self.collate(self.__data_list)
+        _dataset_length = len(self.__data_list)
+        print(f"Saving {self.processed_dir} per_instrument_data.pt")
+        torch.save((_data, _slices, additional_data), osp.join(self.processed_dir, f'per_instrument_data.pt'))
+        del self.__data_list
+        self.__data_list = None
+        self._graph_builder = None
+
+        self._mask_entire_graph()
+        _hash_to_notes = self.graph_builder.hash_to_notes
+        _notes_to_hash = self.graph_builder.notes_to_hash
+        _hash_to_index = self.graph_builder.hash_to_index
+        _index_to_hash = self.graph_builder.index_to_hash
+        additional_data = {
+            'hash_to_notes': _hash_to_notes,
+            'notes_to_hash': _notes_to_hash,
+            'hash_to_index': _hash_to_index,
+            'index_to_hash': _index_to_hash,
         }
 
         print(f"Saving {self.processed_dir} data.pt")
-        torch.save((self.data, self.slices, additional_data), osp.join(self.processed_dir, f'data.pt'))
+        torch.save((_data, _slices, additional_data), osp.join(self.processed_dir, f'data.pt'))
+        del self.__data_list
+        self.__data_list = None
+        self._graph_builder = None
 
-    def process_mask_entire_graph(self):
+        self.load_processed()
+
+    def _mask_entire_graph(self):
         """Process and mask all graphs
         :return:
         """
-        all_data = []
+        self._graph_builder = MidiGraphBuilder(
+            None, is_instrument_graph=True)
+
+        if self.__data_list is None:
+            self.__data_list = []
+
         for raw_path in self.raw_paths:
             print(f"Reading {raw_path}")
-            midi_seqs = MidiReader.read(raw_path)
+            try:
+                midi_seqs = MidiReader.read(raw_path)
+                self._graph_builder.build(midi_seqs)
+                graphs = self._graph_builder.graphs()
+                if not graphs:
+                    raise ValueError("No subgraphs found in graph builder.")
 
-            # we build per instrument
-            graph_builder = MidiGraphBuilder(
-                midi_seqs, per_instrument=self.__per_instrument_graph)
+                midi_data = next(graphs)
 
-            #
-            graph_builder.build()
-            midi_data = graph_builder.graphs()
+                self.all_classes.update(torch.unique(midi_data.y).tolist())
+                if self.pre_filter is not None and not self.pre_filter(midi_data):
+                    continue
 
-            # first we apply pre-filter then apply mask
-            if self.pre_filter is not None and not self.pre_filter(midi_data):
-                continue
+                # we mask entire graph
+                num_graphs = len(midi_data)
+                train_ratio, val_ratio = self.__train_ratio, self.__val_ratio
+                train_size = int(train_ratio * num_graphs)
+                val_size = int(val_ratio * num_graphs)
 
-            all_data.append(midi_data)
-            # first we apply pre-filter then apply mask
-            if self.pre_filter is not None and not self.pre_filter(midi_data):
-                continue
+                # split mask
+                num_nodes = midi_data.x.size(0)
+                train_ratio, val_ratio = self.__train_ratio, self.__val_ratio
+                train_size = int(train_ratio * num_nodes)
+                val_size = int(val_ratio * num_nodes)
 
-        # we mask all graph
-        num_graphs = len(all_data)
-        train_ratio, val_ratio = 0.7, 0.15
-        train_size = int(train_ratio * num_graphs)
-        val_size = int(val_ratio * num_graphs)
+                indices = np.random.permutation(num_nodes)
+                # Assign training, validation, and testing masks
+                midi_data.train_mask = torch.zeros(num_nodes, dtype=torch.bool)
+                midi_data.train_mask[torch.tensor(indices[:train_size])] = True
 
-        indices = np.random.permutation(num_graphs)
-        for idx, data in enumerate(all_data):
-            # training, validation, and testing masks
-            data.train_mask = torch.tensor([idx in indices[:train_size]])
-            data.val_mask = torch.tensor([idx in indices[train_size:train_size + val_size]])
-            data.test_mask = torch.tensor([idx in indices[train_size + val_size:]])
-            # apply pre transform
-            if self.pre_transform is not None:
-                data = self.pre_transform(data)
+                midi_data.val_mask = torch.zeros(num_nodes, dtype=torch.bool)
+                midi_data.val_mask[torch.tensor(indices[train_size:train_size + val_size])] = True
 
-            # save each separately
-            torch.save(data, osp.join(self.processed_dir, f'data_{idx}.pt'))
+                midi_data.test_mask = torch.zeros(num_nodes, dtype=torch.bool)
+                midi_data.test_mask[torch.tensor(indices[train_size + val_size:])] = True
 
-    # def __len__(self):
-    #     return self.__dataset_length
+                if self.pre_transform is not None:
+                    midi_data = self.pre_transform(midi_data)
+                self.__data_list.append(midi_data)
+
+                #
+                # for idx, data in enumerate(midi_data):
+                #     # training, validation, and testing masks
+                #     data.train_mask = torch.tensor([idx in indices[:train_size]])
+                #     data.val_mask = torch.tensor([idx in indices[train_size:train_size + val_size]])
+                #     data.test_mask = torch.tensor([idx in indices[train_size + val_size:]])
+                #     # apply pre transform for train, val and test.
+                #     if self.pre_transform is not None:
+                #         data = self.pre_transform(data)
+                #     self.__data_list.append(data)
+
+            except KeyError as ker_err:
+                print(f"Error in file {raw_path} error: {ker_err}")
+            except FileNotFoundError as file_not_found:
+                print(f"Error in file {raw_path} error: {file_not_found}")
+
+    def split(self, train_size, val_size, test_size):
+        """
+        :param train_size:
+        :param val_size:
+        :param test_size:
+        :return:
+        """
+        train_dataset = torch.utils.data.Subset(self, self.train_idx[:train_size])
+        val_dataset = torch.utils.data.Subset(self, self.val_idx[:val_size])
+        test_dataset = torch.utils.data.Subset(self, self.test_idx[:test_size])
+        return train_dataset, val_dataset, test_dataset
 
     def get(self, idx):
-        self.data, self.slices, _ = torch.load(osp.join(self.processed_dir, f'data.pt'))
+        """
+        :param idx:
+        :return:
+        """
+        if self.__is_instrument_graph:
+            file_name = f'per_instrument_data.pt'
+        else:
+            file_name = f'data.pt'
+
+        self.data, self.slices, _ = torch.load(osp.join(self.processed_dir, file_name))
         return self.data
-    #
-    # @property
-    # def num_classes(self) -> int:
-    #     if self.transform is None:
-    #         return self.data.y.shape[0]
-    #     return super().num_classes
-
-    # @property
-    # def num_classes(self) -> int:
-    #     if self.transform is None:
-    #         return self._infer_num_classes(self.data.y)
-    #     return super().num_classes
-
-    # target_indices = [hash_to_index[hash_val] for hash_val in target_hash_values]
-    # target = torch.tensor(target_indices)
 
 
 def example_normalize(y_hash_values):

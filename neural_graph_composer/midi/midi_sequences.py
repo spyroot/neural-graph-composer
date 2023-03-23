@@ -262,7 +262,6 @@ class MidiNoteSequences:
 
     def __iter__(self):
         """Return an iterator over the keys sorted in ascending order."""
-        print("Iter called")
         return iter(self.__midi_seqs.keys())
 
     def __repr__(self):
@@ -386,9 +385,11 @@ class MidiNoteSequences:
             if self.time_signatures and v.midi_time > self.time_signatures[-1].midi_time:
                 self._last_key_midi_seq_num += 1
 
-            bisect.insort_left(
-                bisect.insort_left(self.time_signatures, v, key=lambda k: k)
-            )
+            bisect.insort_left(self.key_signatures, v, key=lambda k: k)
+
+            # bisect.insort_left(
+            #     bisect.insort_left(self.time_signatures, v, key=lambda k: k)
+            # )
 
         self.key_signature.cache_clear()
 
@@ -581,7 +582,7 @@ class MidiNoteSequences:
             return 4, 4
 
         i = bisect_right(self.time_signatures, MidiTimeSignature(midi_time=start_time)) - 1
-        return self.time_signatures[i].denominator, self.time_signatures[i].numerator
+        return self.time_signatures[i].numerator, self.time_signatures[i].denominator
 
     @cache
     def tempo_signature(self, start_time: float) -> Tuple[int, int]:

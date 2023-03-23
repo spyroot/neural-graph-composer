@@ -169,6 +169,31 @@ class Test(TestCase):
         # clean up the test file
         os.remove(test_file)
 
+    def test_from_file_different_resolution(self):
+        """Test the `from_file` method of the `MidiReader` class using
+        a MIDI file with a different resolution.
+
+        This test creates a new MIDI file with a single note
+        with a different resolution, loads it using the `from_file`
+        method of a mock MIDI reader, and checks that the
+        resulting `MidiNoteSequence` object has the expected properties.
+        """
+        midi_data = MidiNoteSequence(resolution=480, instrument=1)
+        midi_data.notes.append(MidiNote(60, 0, 1, velocity=100, instrument=1))
+        test_file = "test_resolution.mid"
+        midi_data.to_midi_file(test_file)
+
+        midi_seq = MidiReader.from_file(test_file)
+        self.assertIsInstance(midi_seq, MidiNoteSequences)
+        self.assertEqual(len(midi_seq[0].notes), 1)
+        self.assertEqual(midi_seq[0].notes[0].pitch, 60)
+        self.assertEqual(midi_seq[0].notes[0].start_time, 0)
+        self.assertEqual(midi_seq[0].notes[0].end_time, 1)
+        self.assertEqual(midi_seq[0].notes[0].velocity, 100)
+        self.assertEqual(midi_seq[0].notes[0].instrument, 1)
+        self.assertEqual(midi_seq[0].resolution, 480)
+        os.remove(test_file)
+
     def test_from_file_different_instrument(self):
         """Test the `from_file` method of the `MidiReader` class using
         a MIDI file with a note played on a different instrument.
@@ -194,7 +219,6 @@ class Test(TestCase):
         self.assertEqual(midi_seq[0].notes[0].end_time, 1)
         self.assertEqual(midi_seq[0].notes[0].velocity, 100)
         self.assertEqual(midi_seq[0].notes[0].instrument, 1)
-
         os.remove(test_file)
 
     def test_from_file_multiple_instruments(self):
@@ -208,13 +232,14 @@ class Test(TestCase):
 
         :return:
         """
-        midi_data1 = MidiNoteSequence(instrument=MidiInstrumentInfo(instrument=1, is_drum=False, name='Piano'))
+        midi_data1 = MidiNoteSequence(
+            instrument=MidiInstrumentInfo(instrument=1, is_drum=False, name='Piano'))
         midi_data1.notes.append(MidiNote(60, 0, 1, velocity=100, instrument=1))
 
-        midi_data2 = MidiNoteSequence(instrument=MidiInstrumentInfo(instrument=2, is_drum=False, name='Guitar'))
+        midi_data2 = MidiNoteSequence(
+            instrument=MidiInstrumentInfo(instrument=2, is_drum=False, name='Guitar'))
         midi_data2.notes.append(MidiNote(64, 0.5, 1.5, velocity=80, instrument=2))
 
-        # combine the two MidiNoteSequences into one
         new_midi_seq = MidiNoteSequences(midi_seq=[midi_data1, midi_data2])
         self.assertEqual(len(new_midi_seq), 2)
         self.assertEqual(new_midi_seq[0].instrument.instrument_num, 1)
