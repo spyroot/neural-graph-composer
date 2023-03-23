@@ -62,7 +62,7 @@ class HashToIndexTransform:
 class MidiDataset(InMemoryDataset):
     """Create dataset from list of MIDI files
 
-    per_graph_slit dictates if we want threat each instrument as seperate graph.
+    per_graph_slit dictates if we want threat each instrument as separate graph.
     or we want merge
 
 

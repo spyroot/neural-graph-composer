@@ -302,7 +302,7 @@ class GraphGenerationModel(Experiments):
         #                              list(decoder.parameters()) + list(graph_lstm.parameters()), lr=args.lr)
 
     def train_gcn(self, grap_data: Data,
-                  epochs: int = 100,
+                  epochs: int = 10,
                   learning_rate: float = 0.01) -> tuple[float, float, float]:
         """
         :param grap_data: A PyTorch Geometric `Data` object containing the graph data.
@@ -321,7 +321,7 @@ class GraphGenerationModel(Experiments):
         gcn_fp = np.zeros(self.num_classes)
         gcn_fn = np.zeros(self.num_classes)
 
-        for epoch in range(epochs):
+        for epoch in range(1, epochs + 1):
 
             self.optimizer_gcn.zero_grad()
             node_embeddings = self.gcn_model(grap_data.x, grap_data.edge_index)
@@ -367,7 +367,8 @@ class GraphGenerationModel(Experiments):
         return gcn_loss, correct_gcn_predictions, total_gcn_predictions
         # print(f"Epoch {epoch}, Loss: {loss_gcn.item():.4f} shape {output.shape} {self._dataset.num_classes}")
 
-    def train_lstm(self, seq_data: List[torch.Tensor], epochs: int = 100, learning_rate: float = 0.01):
+    def train_lstm(
+            self, seq_data: List[torch.Tensor], epochs: int = 10, learning_rate: float = 0.01):
         """Train the LSTM model on a list of edge embeddings.
 
         During training, we consider a true positive to be a correct prediction
@@ -400,7 +401,7 @@ class GraphGenerationModel(Experiments):
         false_positives = 0
         false_negatives = 0
 
-        for epoch in range(epochs):
+        for epoch in range(1, epochs + 1):
             for seq in seq_data:
                 self.optimizer_lstm.zero_grad()
                 seq = seq.view(1, -1, self.input_size)

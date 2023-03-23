@@ -352,7 +352,6 @@ class MidiGraphBuilder:
 
         logging.debug(f"Total number of nodes in the dataset: {total_nodes}.")
 
-
     @staticmethod
     def same_start_time(n, tolerance=1e-6):
         return abs(n.start_time - n.start_time) < tolerance
@@ -387,7 +386,7 @@ class MidiGraphBuilder:
 
     @staticmethod
     def create_tensor(node_attr_type, pitch_set, max_vector_size):
-        """Create tensor for each node..
+        """Create tensor for each node.
         :param node_attr_type:
         :param pitch_set:
         :param max_vector_size:

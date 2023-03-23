@@ -1,9 +1,44 @@
 """
 This data set checker.
 
-This expriment GAE and Variationaal
-models for MIDI NODE embeding reconstruction task.
+Yes, I understand. The GraphBuilder is responsible for constructing a
+graph from a MIDI file, where each node in the graph represents a set of notes
+played together, forming a chord. The edges in the graph represent the relationships between these chords.
 
+The Graph Auto-Encoder (GAE) model is then used to process the custom MidiDataset.
+ It takes the graph structure of each MIDI composition and learns a latent
+ representation of the chords and their relationships. The GAE can be used
+ for various tasks, such as generating new MIDI compositions or predicting
+ the next chords in a given sequence. The encoder and decoder parts of the GAE can be any combination of
+the provided classes, such as GCNEncoder, VariationalGCNEncoder, LinearEncoder, and VariationalLinearEncoder.
+
+
+Chord prediction: GAE can be used to predict the next chord in a sequence based on the learned graph structure.
+By training the model on the relationships between chords in the MIDI dataset, it can generate new chord
+ progressions that follow the learned patterns.
+
+Music genre classification: GAE can be used for music genre classification by learning to
+ differentiate between different styles and structures of music. By training the model on a
+ labeled dataset of MIDI files, it can identify the characteristics that define various
+ genres and classify new MIDI compositions accordingly.
+
+Chord embeddings: GAE can be used to learn meaningful representations (embeddings) of chords.
+These embeddings can then be used to compare and analyze chords, identify similarities
+ and differences, and visualize the chord space.
+
+Music generation: GAE can be utilized to generate new MIDI compositions.
+By sampling from the latent space of chords and their relationships, GAE can create new chord
+progressions and, consequently, new musical pieces that exhibit similar characteristics
+ to the training dataset.
+
+Anomaly detection: GAE can be employed for detecting anomalous patterns or chords in a MIDI
+composition. By comparing the input MIDI file's graph structure with the learned patterns
+in the dataset, the model can identify chords or sequences that deviate from the norm.
+
+Music recommendation: GAE can be used to develop a music recommendation system based
+on the learned relationships between chords and MIDI compositions. By comparing the latent
+representations of different MIDI files, the model can suggest similar compositions or pieces
+that share a common structure or style.
 
 Author Mus spyroot@gmail.com
 """
@@ -127,6 +162,7 @@ class RandomEdgeDrop(T.BaseTransform):
 class GCNEncoder(torch.nn.Module):
     """GCN Encoder
     """
+
     def __init__(self, in_channels, out_channels):
         super().__init__()
         self.conv1 = GCNConv(in_channels, 2 * out_channels)
@@ -140,6 +176,7 @@ class GCNEncoder(torch.nn.Module):
 class VariationalGCNEncoder(torch.nn.Module):
     """VAE GCN Encoder
     """
+
     def __init__(self, in_channels, out_channels):
         super().__init__()
         self.conv1 = GCNConv(in_channels, 2 * out_channels)
@@ -154,6 +191,7 @@ class VariationalGCNEncoder(torch.nn.Module):
 class LinearEncoder(torch.nn.Module):
     """ Liner GCN
     """
+
     def __init__(self, in_channels, out_channels):
         super().__init__()
         self.conv = GCNConv(in_channels, out_channels)
@@ -165,6 +203,7 @@ class LinearEncoder(torch.nn.Module):
 class VariationalLinearEncoder(torch.nn.Module):
     """ VariationalLinearEncoder
     """
+
     def __init__(self, in_channels, out_channels):
         super().__init__()
         self.conv_mu = GCNConv(in_channels, out_channels)

@@ -271,7 +271,7 @@ class GraphGenerationModel(Experiments):
         self.input_size = self.hidden_channels * 2
         self.hidden_size = midi_dataset.num_classes * 2
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.num_layers = 1
+        self.num_layers = 2
 
         print(f"Dataset:            {midi_dataset}")
         print(f"Epochs:             {epochs}")
@@ -306,8 +306,6 @@ class GraphGenerationModel(Experiments):
         self.decoder = Decoder(midi_dataset.num_classes, midi_dataset.num_classes,
                                lstm_output_size=self.hidden_size).to(self.device)
         self.lstm_model = GraphLSTM(self.input_size, self.hidden_size, self.num_layers).to(self.device)
-        self.optimizer_gcn = torch.optim.Adam(self.gcn_model.parameters(), lr=self.embeddings_lr)
-        self.optimizer_lstm = torch.optim.Adam(self.lstm_model.parameters(), lr=lstm_lr)
 
         self.optimizer = torch.optim.Adam(
             [
@@ -594,12 +592,13 @@ def main(args, midi_dataset):
         graph_generation_model.lstm_model.train()
         lstm_loss, correct_lstm_predictions, total_lstm_predictions = graph_generation_model.train_lstm(sequence_data)
         total_loss = gcn_loss + lstm_loss
-        graph_generation_model.optimizer.backward(retain_graph=True)
-        graph_generation_model.optimizer.lstm.step()
+        graph_generation_model.optimizer.backward()
+        graph_generation_model.optimizer.step()
         graph_generation_model.optimizer.zero_grad()
 
-    grap_data = grap_data.clone()
+        print(f"Total loss: {total_loss.item():.4f}")
 
+    grap_data = grap_data.clone()
     # generate new nodes and edges
     new_node_embeddings = graph_generation_model.gcn_model(
         grap_data.x, grap_data.edge_index)
