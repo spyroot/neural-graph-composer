@@ -79,8 +79,12 @@ class MidiDataset(InMemoryDataset):
                  val_ratio: Optional[float] = 0.15,
                  per_instrument_graph: Optional[bool] = True,
                  per_graph_slit: Optional[bool] = True,
+                 default_midi_loc: str = "~/dev/neural-graph-composer/neural_graph_composer/dataset"
                  ):
         """
+        default_midi_loc used to indicate a directory where
+        all MIDI files.
+
         :param root: Root directory where the dataset should be saved.
         :param transform:  A function/transform that takes in an
                 `torch_geometric.data.Data` object and returns a transformed version.
@@ -118,7 +122,7 @@ class MidiDataset(InMemoryDataset):
 
         # root = osp.expanduser(osp.normpath(root))
         # self.root = root
-
+        self._default_loc = Path(default_midi_loc).expanduser().resolve()
         self.__url = default_webserver
         self.__node_attr_name = default_node_attr
         self.__train_ratio = train_ratio
@@ -254,7 +258,7 @@ class MidiDataset(InMemoryDataset):
         """
         # module_dir = os.path.dirname(os.path.abspath(__file__))
         # midi_dir = os.path.join(module_dir, 'data', 'midi')
-        midi_files_dir = '/Users/spyroot/dev/neural-graph-composer/neural_graph_composer/dataset'
+        midi_files_dir = self._default_loc
         return [f for f in os.listdir(midi_files_dir)
                 if os.path.isfile(os.path.join(midi_files_dir, f)) and f.endswith('.mid')
                 ]
