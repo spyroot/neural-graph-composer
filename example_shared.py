@@ -1,10 +1,7 @@
 import numpy as np
 import torch
-import torch.nn.functional as F
 from torch.utils.data import random_split
 from torch_geometric.data import Data
-from torch_geometric.loader import DataLoader
-from neural_graph_composer.midi_dataset import MidiDataset
 
 
 class Experiments:

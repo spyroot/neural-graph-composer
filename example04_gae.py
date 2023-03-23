@@ -1,17 +1,12 @@
 """
 This data set checker.
 
-Yes, I understand. The GraphBuilder is responsible for constructing a
-graph from a MIDI file, where each node in the graph represents a set of notes
-played together, forming a chord. The edges in the graph represent the relationships between these chords.
-
 The Graph Auto-Encoder (GAE) model is then used to process the custom MidiDataset.
  It takes the graph structure of each MIDI composition and learns a latent
  representation of the chords and their relationships. The GAE can be used
  for various tasks, such as generating new MIDI compositions or predicting
  the next chords in a given sequence. The encoder and decoder parts of the GAE can be any combination of
 the provided classes, such as GCNEncoder, VariationalGCNEncoder, LinearEncoder, and VariationalLinearEncoder.
-
 
 Chord prediction: GAE can be used to predict the next chord in a sequence based on the learned graph structure.
 By training the model on the relationships between chords in the MIDI dataset, it can generate new chord

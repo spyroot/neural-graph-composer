@@ -1,20 +1,17 @@
+import argparse
 import os
 from typing import Optional
-import numpy as np
-import torch_geometric
-from matplotlib import pyplot as plt
-from torch_geometric.nn import GCNConv, GINConv, GATConv
-from sklearn.metrics import f1_score
-from sklearn.metrics import accuracy_score
-import argparse
 
+import numpy as np
 import torch
 import torch.nn.functional as F
+import torch_geometric
 import torch_geometric.transforms as T
+from matplotlib import pyplot as plt
+from sklearn.metrics import accuracy_score
+from sklearn.metrics import f1_score
 from torch_geometric.loader import DataLoader
-from torch_geometric.nn import GraphConv, TopKPooling
-from torch_geometric.nn import global_max_pool as gmp
-from torch_geometric.nn import global_mean_pool as gap
+from torch_geometric.nn import GCNConv, GINConv, GATConv
 
 from example_shared import Experiments
 from neural_graph_composer.midi_dataset import MidiDataset
