@@ -505,7 +505,8 @@ class MidiGraphBuilder:
                 midi_graph.add_node(new_node_hash, attr=new_x, label=new_node_hash, node_hash=new_node_hash)
             else:
                 # if node already connected update weight
-                # print(f" checking connectivity {self.hash_to_notes[new_node_hash]} {self.hash_to_notes[last_node_hash]}")
+                # print(f" checking connectivity {self.hash_to_notes[new_node_hash]}
+                # {self.hash_to_notes[last_node_hash]}")
                 if midi_graph.has_edge(new_node_hash, last_node_hash):
                     # print(f" update edge {self.hash_to_notes[new_node_hash]} {self.hash_to_notes[last_node_hash]}")
                     midi_graph[new_node_hash][last_node_hash]['weight'] += 1.0
@@ -646,44 +647,3 @@ class MidiGraphBuilder:
             """
             midi_sequences = MidiNoteSequences(midi_seq=midi_sequence)
             return cls(midi_sequences, per_instrument, hidden_feature_size)
-
-        # for k in sorted_keys:
-        #     notes = data[k]
-        #
-        #     if last_node_hash is None:
-        #         midi_graph.add_node(new_node_hash, attr=new_x, label=new_node_hash, node_hash=new_node_hash)
-        #         last_node_hash = new_node_hash
-        #         last_node_name = pitch_names
-        #     else:
-        #         # Add self-loop for the last node if it's a hash
-        #         if isinstance(last_node_hash, int) and midi_graph.has_node(last_node_hash):
-        #             if not midi_graph.has_edge(last_node_hash, last_node_hash):
-        #                 midi_graph.add_edge(last_node_hash, last_node_hash, weight=1.0)
-        #             else:
-        #                 midi_graph[last_node_hash][last_node_hash]['weight'] += 1
-        #
-        #         # If the new node is already connected to the last node, update the weight
-        #         if midi_graph.has_edge(last_node_hash, new_node_hash):
-        #             midi_graph[last_node_hash][new_node_hash]['weight'] += 1
-        #         else:
-        #             midi_graph.add_node(new_node_hash, attr=new_x, label=pitch_names, node_hash=new_node_hash)
-        #             midi_graph.add_edge(last_node_hash, new_node_hash, weight=1.0)
-        #         last_node_hash = new_node_hash
-        #         last_node_name = pitch_names
-
-        # def __iter__(self):
-        #     """Return an iterator over the keys sorted in ascending order."""
-        #     for s in self.midi_sequences:
-        #         g = self.build_sequence(
-        #             self.midi_sequences[s],
-        #             default_trim_time=self.default_trim_time,
-        #             self.max_vector_size=max_vector_size,
-        #             velocity_num_buckets=velocity_num_buckets,
-        #             node_attr_type=node_attr_type,
-        #             is_debug=is_debug
-        #         )
-        #
-        #         # g = nx.convert_node_labels_to_integers(g)
-        #         pyg_data = self.from_midi_networkx(g)
-        #         self._pyg_data.append(pyg_data)
-        #         self._sub_graphs.append(g)

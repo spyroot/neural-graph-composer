@@ -137,14 +137,7 @@ class Example02(Experiments):
             # y_masked = y_masked.unsqueeze(0)  # get to (batch_size, num_class)
             # pred_masked = pred_masked.unsqueeze(0)  # get to (batch_size, num_class)
             pred_class_idx = torch.argmax(pred_masked, dim=1)
-            # print(f"Pred idx {pred_class_idx.shape}")
-            # print(f"y_masked shape {y_masked.shape}")
-            # Pred idx torch.Size([1, 48])
-            # y_masked shape torch.Size([1, 10])
-
             correct = torch.eq(pred_class_idx, y_masked)
-            # print("Correct", correct)
-
             accuracy += torch.mean(correct.float())
             total += y_masked.shape[0]
         return accuracy / total

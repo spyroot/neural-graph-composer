@@ -1,17 +1,15 @@
 """
 
-Here we trying
+Here we're trying
 In the context of graph completion, y typically represents the
 ground truth labels or features for all nodes in the graph
 (both the observed and missing ones). However, during training,
 we only use the observed nodes as input and try to predict the missing nodes based on
- their neighboring observed nodes. Once the missing nodes are predicted,
- we can evaluate the model's performance by comparing its predictions to the
-  ground truth labels or features stored in y.
+their neighboring observed nodes. Once the missing nodes are predicted,
+we can evaluate the model's performance by comparing its predictions to the
+ground truth labels or features stored in y.
 """
-import heapq
 from typing import Optional
-
 import argparse
 import heapq
 from typing import List
@@ -622,7 +620,7 @@ if __name__ == '__main__':
     """
     """
     parser = argparse.ArgumentParser()
-    parser.add_argument('--batch_size', type=int, default=1)
+    parser.add_argument('--batch_size', type=int, default=32)
     parser.add_argument('--epochs', type=int, default=100)
     parser.add_argument('--hidden_dim', type=int, default=32)
     parser.add_argument('--emb_lr', type=float, default=0.01)
@@ -634,6 +632,7 @@ if __name__ == '__main__':
     parser.add_argument('--num_val', type=float, default=0.05)
     parser.add_argument('--num_test', type=float, default=0.1)
     parser.add_argument('--add_negative_train_samples', type=bool, default=False)
+    parser.add_argument('--wandb', action='store_true', help='Track experiment')
 
     args = parser.parse_args()
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -650,7 +649,7 @@ if __name__ == '__main__':
             T.RandomLinkSplit(
                 num_val=args.num_val,
                 num_test=args.num_test,
-                is_undirected=True,
+                is_undirected=False,
                 split_labels=True,
                 add_negative_train_samples=args.add_negative_train_samples)
         ])

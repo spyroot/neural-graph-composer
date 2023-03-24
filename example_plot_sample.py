@@ -1,7 +1,5 @@
 import matplotlib.pyplot as plt
 import networkx as nx
-
-from neural_graph_composer.midi.midi_sequence import MidiNoteSequence
 from neural_graph_composer.midi_graph_builder import MidiGraphBuilder
 from neural_graph_composer.midi_reader import MidiReader
 
@@ -31,18 +29,6 @@ if __name__ == '__main__':
     # Remap node labels to pitch names
     note_names = {hash_val: list(note_set)[0] for hash_val, note_set in nx.get_node_attributes(g, 'label').items()}
     remapped_labels = [note_names[hash_val] for hash_val in g.nodes()]
-
-    # Update node labels in graph
-    # nx.set_node_attributes(g, dict(remapped_labels), name='label')
-
-    # nx.set_node_attributes(g, dict(zip(g.nodes(), remapped_labels)), name='label')
-    # nx.set_node_attributes(g, remapped_labels, name='label')
-
-    # default_labels = {node: '' for node in g.nodes()}
-    # # Update the dictionary with the remapped labels
-    # default_labels.update(dict(remapped_labels))
-    # # Set the node labels in the graph
-    # nx.set_node_attributes(g, default_labels, name='label')
 
     #
     pos = nx.spring_layout(g, seed=42)

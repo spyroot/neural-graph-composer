@@ -1,9 +1,7 @@
-import unittest
-import tempfile
 import os
+import unittest
 
 from neural_graph_composer.midi.midi_sequence import MidiNoteSequence
-from neural_graph_composer.midi_graph_builder import MidiGraphBuilder
 
 
 class TestMidiGraphBuilder(unittest.TestCase):

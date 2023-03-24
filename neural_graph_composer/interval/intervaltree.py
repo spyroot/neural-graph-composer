@@ -366,7 +366,7 @@ class FloatIntervalTree(MutableSet):
     def difference(self, other):
         """
         Returns a new tree, comprising all intervals in self but not
-        in other.
+        in others.
         """
         ivs = set()
         for iv in self:

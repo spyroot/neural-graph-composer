@@ -322,7 +322,7 @@ def main(args):
     ])
 
     dataset = MidiDataset(root="./data", transform=transform)
-    batch_size = 2
+    batch_size = args.batch_size
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
     in_channels, out_channels = dataset.num_features, 32
@@ -443,6 +443,8 @@ if __name__ == '__main__':
     parser.add_argument('--linear', action='store_true')
     parser.add_argument('--epochs', type=int, default=400)
     parser.add_argument('--save_interval', type=int, default=200)
+    parser.add_argument('--wandb', action='store_true', help='Track experiment')
+
     args = parser.parse_args()
     main(args)
 

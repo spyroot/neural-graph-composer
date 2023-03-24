@@ -143,14 +143,6 @@ class Test(TestCase):
             MidiNote(pitch=61, start_time=8.0, end_time=8.5),
             MidiNote(pitch=62, start_time=9.0, end_time=9.5),
             MidiNote(pitch=62, start_time=10.0, end_time=10.5),
-
-            # MidiNote(pitch=63, start_time=3.0, end_time=4.0),
-            # MidiNote(pitch=64, start_time=3.0, end_time=5.0),
-            # MidiNote(pitch=65, start_time=3.0, end_time=4.0),
-            # MidiNote(pitch=66, start_time=4.0, end_time=5.0),
-            # MidiNote(pitch=60, start_time=5.0, end_time=6.0),
-            # MidiNote(pitch=61, start_time=6.0, end_time=7.0),
-            # MidiNote(pitch=62, start_time=7.0, end_time=8.0),
         ]
 
         seq = MidiNoteSequence(notes=notes)

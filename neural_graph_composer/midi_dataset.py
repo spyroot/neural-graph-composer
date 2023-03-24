@@ -73,7 +73,7 @@ class MidiDataset(InMemoryDataset):
                  pre_transform: Optional[Callable] = None,
                  pre_filter: Optional[Callable] = None,
                  default_node_attr: str = 'attr',
-                 file_names: Optional[List[str]] = None,
+                 midi_files: Optional[List[str]] = None,
                  default_webserver: Optional[str] = 'http://localhost:9000',
                  train_ratio: Optional[float] = 0.7,
                  val_ratio: Optional[float] = 0.15,
@@ -102,11 +102,11 @@ class MidiDataset(InMemoryDataset):
         :param val_ratio: Validation ratio (default 0.15).
         :param per_graph_slit: Whether to split the dataset into graphs.
         """
-        if file_names is not None:
-            if not isinstance(file_names, list):
-                raise ValueError("file_names should be a list of strings.")
-            if not all(isinstance(file_name, str) for file_name in file_names):
-                raise ValueError("All elements in file_names should be strings.")
+        if midi_files is not None:
+            if not isinstance(midi_files, list):
+                raise ValueError("midi_files should be a list of strings.")
+            if not all(isinstance(file_name, str) for file_name in midi_files):
+                raise ValueError("All elements in midi_files should be strings.")
 
         if not (0 <= train_ratio <= 1):
             raise ValueError("train_ratio should be between 0 and 1.")
@@ -119,6 +119,15 @@ class MidiDataset(InMemoryDataset):
 
         self.logger = logging.getLogger(__name__ + '.' + self.__class__.__name__)
         self.logger.setLevel(logging.WARNING)
+
+        self.files = []
+        if midi_files is not None:
+            self.files = midi_files
+        else:
+            for r, _, f in os.walk(root):
+                for file in f:
+                    if '.mid' in file:
+                        self.files.append(os.path.join(r, file))
 
         # root = osp.expanduser(osp.normpath(root))
         # self.root = root
@@ -160,15 +169,6 @@ class MidiDataset(InMemoryDataset):
             self.load_processed()
         else:
             print("File not found.")
-            # out = torch.load(self.processed_paths[0])
-            # if not isinstance(out, tuple) or len(out) != 3:
-            #     raise RuntimeError("The 'data' object must a tuple.")
-            # self.data, self.slices, additional_data = out
-            # self.__total_num_classes = len(torch.unique(self.data.y))
-            # self._notes_to_hash = additional_data['hash_to_notes']
-            # self._hash_to_notes = additional_data['notes_to_hash']
-            # self._hash_to_index = additional_data['hash_to_index']
-            # self._index_to_hash = additional_data['index_to_hash']
 
     @property
     def hash_to_index(self) -> Dict[int, int]:
@@ -253,14 +253,20 @@ class MidiDataset(InMemoryDataset):
 
     @property
     def raw_file_names(self):
-        """
+        """Method by default uses self._default_loc to get list of all midi files.
+        if user provide list of files , it will return that list
         :return:
         """
         # module_dir = os.path.dirname(os.path.abspath(__file__))
         # midi_dir = os.path.join(module_dir, 'data', 'midi')
-        midi_files_dir = self._default_loc
-        return [f for f in os.listdir(midi_files_dir)
-                if os.path.isfile(os.path.join(midi_files_dir, f)) and f.endswith('.mid')
+        if self.files is not None and len(self.files) > 0:
+            return self.files
+        else:
+            # location we use to get list of all midi files
+            midi_files_dir = self._default_loc
+            return [f for f in os.listdir(midi_files_dir)
+                    if os.path.isfile(os.path.join(midi_files_dir, f))
+                    and f.endswith('.mid')
                 ]
 
     def processed_file_exists(self):
@@ -334,17 +340,31 @@ class MidiDataset(InMemoryDataset):
             and pyg_data.edge_attr is not None and pyg_data.weight.size(0) > 0
 
     def download(self):
-        """
+        """ Downloads the MIDI files from the given URL and extracts them to the `raw_dir`.
+         If a list of files is provided, it copies the files to the `raw_dir`
+         instead of downloading them.
         :return:
         """
         print(f"raw_file_names {self.raw_file_names}")
-        for raw_file in self.raw_file_names:
-            print(f"Downloading {raw_file}")
-            path = download_url(f"{self.__url}/{raw_file}", self.raw_dir)
-            if raw_file.endswith(".zip"):
-                extract_zip(path, self.raw_dir)
-            if raw_file.endswith(".tar"):
-                extract_tar(path, self.raw_dir)
+        if len(self.files) > 0:
+            for i, raw_file in enumerate(self.raw_file_names):
+                p = Path(raw_file).expanduser().resolve()
+                if not p.exists():
+                    raise RuntimeError(f"File not found: {raw_file}")
+                if p.is_file():
+                    dst_path = os.path.join(self.raw_dir, p.name)
+                    self.files[i] = p.name
+                    src_path = os.path.abspath(str(p))
+                    print(f"Downloading {src_path} to {dst_path}")
+                    shutil.copy(src_path, dst_path)
+        else:
+            for raw_file in self.raw_file_names:
+                print(f"Downloading {raw_file}")
+                path = download_url(f"{self.__url}/{raw_file}", self.raw_dir)
+                if raw_file.endswith(".zip"):
+                    extract_zip(path, self.raw_dir)
+                if raw_file.endswith(".tar"):
+                    extract_tar(path, self.raw_dir)
 
     def _mask_per_instrument(self):
         """Process each midi file construct graph per each instrument,

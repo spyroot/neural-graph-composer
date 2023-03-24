@@ -10,9 +10,9 @@ import torch_geometric.transforms as T
 from matplotlib import pyplot as plt
 from sklearn.metrics import accuracy_score
 from sklearn.metrics import f1_score
+from torch import nn
 from torch_geometric.loader import DataLoader
 from torch_geometric.nn import GCNConv, GINConv, GATConv
-
 from example_shared import Experiments
 from neural_graph_composer.midi_dataset import MidiDataset
 
@@ -25,7 +25,6 @@ class GCN2(torch.nn.Module):
 
     def forward(self, data):
         """
-
         :param data:
         :return:
         """
@@ -38,19 +37,29 @@ class GCN2(torch.nn.Module):
 
 
 class GCN3(torch.nn.Module):
-    def __init__(self, num_feature, hidden_channels, num_classes):
+    def __init__(self, num_feature, hidden_channels, num_classes,
+                 is_relu: Optional[bool] = True):
         super(GCN3, self).__init__()
         self.conv1 = GCNConv(num_feature, hidden_channels)
+        self.prelu01 = nn.PReLU(hidden_channels)
         self.conv2 = GCNConv(hidden_channels, hidden_channels)
+        self.prelu02 = nn.PReLU(hidden_channels)
         self.conv3 = GCNConv(hidden_channels, num_classes)
+        self.is_relu = is_relu
 
     def forward(self, data):
         x, edge_index = data.x, data.edge_index
         x = self.conv1(x, edge_index)
-        x = F.relu(x)
+        if self.is_relu:
+            x = F.relu(x)
+        else:
+            self.prelu01(x)
         x = F.dropout(x, p=0.5, training=self.training)
         x = self.conv2(x, edge_index)
-        x = F.relu(x)
+        if self.is_relu:
+            x = F.relu(x)
+        else:
+            self.prelu02(x)
         x = F.dropout(x, p=0.5, training=self.training)
         x = self.conv3(x, edge_index)
         return F.log_softmax(x, dim=1)
@@ -121,7 +130,9 @@ class Example01(Experiments):
     def __init__(
             self, epochs: int, batch_size: int,
             midi_dataset: MidiDataset, hidden_dim: int,
-            model_type: Optional[str] = "GCN3", lr: Optional[float] = 0.01):
+            model_type: Optional[str] = "GCN3",
+            lr: Optional[float] = 0.01,
+            is_relu: Optional[bool] = True):
         """
            Example experiment for training a graph neural network on MIDI data.
         :param epochs:
@@ -162,17 +173,21 @@ class Example01(Experiments):
             midi_dataset, batch_size=batch_size, shuffle=False)
 
         if model_type == "GCN3":
-            print(f"Creating GCN3 {self._feature_dim} {self._hidden_dim} {self._num_classes}")
+            print(f"Creating GCN3 feature dim: {self._feature_dim} "
+                  f"hidden size {self._hidden_dim} num classes {self._num_classes}")
             self.model = GCN3(
-                self._feature_dim, self._hidden_dim, self._num_classes)
+                self._feature_dim, self._hidden_dim, self._num_classes, is_relu=is_relu)
         elif model_type == "GAT":
-            print(f"Creating GAT {self._feature_dim} {self._hidden_dim} {self._num_classes}")
+            print(f"Creating GAT feature dim: {self._feature_dim} "
+                  f"hidden size {self._hidden_dim} num classes {self._num_classes}")
             self.model = GAT(
                 self._feature_dim, self._hidden_dim, self._num_classes)
             self._is_gat = True
         else:
             self.model = GIN(
                 self._feature_dim, self._hidden_dim, self._num_classes)
+            print(f"Creating GIN feature dim: {self._feature_dim} "
+                  f"hidden size {self._hidden_dim} num classes {self._num_classes}")
             self._is_gin = True
 
         self.optimizer = torch.optim.Adam(
@@ -193,7 +208,11 @@ class Example01(Experiments):
         y_train_all = []
 
         for i, b in enumerate(self.train_loader):
-            train_batch, _, _ = b
+            if isinstance(b, list):
+                train_batch, _, _ = b
+            else:
+                train_batch = b
+
             train_batch.to(self.device)
             self.optimizer.zero_grad()
             out = self.model(train_batch)
@@ -244,32 +263,15 @@ class Example01(Experiments):
         loss_avg = loss_all / len(self.train_loader.dataset)
         return loss_avg, train_f1, train_acc, recall, precision
 
-    def plot_metrics(
-            self, train_loss, train_f1, train_acc,
-            train_precision, train_recall,
-            val_acc, val_f1, val_precision, val_recall,
-            test_acc, test_f1, test_precision, test_recall,
-            num_epochs, output_dir="metric", run=None):
+    @staticmethod
+    def plot_metrics(train_loss, train_f1, train_acc,
+                     train_precision, train_recall,
+                     val_acc, val_f1, val_precision, val_recall,
+                     test_acc, test_f1, test_precision, test_recall,
+                     num_epochs, output_dir="metric", run=None):
         """
-        :param run:
-        :param output_dir:
-        :param train_loss:
-        :param train_f1:
-        :param train_acc:
-        :param train_precision:
-        :param train_recall:
-        :param val_acc:
-        :param val_f1:
-        :param val_precision:
-        :param val_recall:
-        :param test_acc:
-        :param test_f1:
-        :param test_precision:
-        :param test_recall:
-        :param num_epochs:
         :return:
         """
-        print(f"EPOCS {num_epochs}")
         epochs = range(1, num_epochs + 1)
         plt.figure(figsize=(15, 10))
         plt.plot(epochs, train_loss, label="train_loss")
@@ -383,7 +385,7 @@ class Example01(Experiments):
         self.plot_metrics(
             train_losses, train_f1s, train_accs, train_precisions,
             train_recalls, val_accs, val_f1s, val_precisions, val_recalls,
-            test_accs, test_f1s, test_precisions, test_recalls, self._epochs )
+            test_accs, test_f1s, test_precisions, test_recalls, self._epochs)
 
     def evaluate(self, eval_type: str):
         """
@@ -402,17 +404,25 @@ class Example01(Experiments):
         fp = 0
         fn = 0
         for b in data_loader:
-            if eval_type == "val":
-                _, val, _ = b
-                batch = val
+            if isinstance(b, list):
+                if eval_type == "val":
+                    _, val, _ = b
+                    batch = val
+                else:
+                    _, _, test_b = b
+                    batch = test_b
             else:
-                _, _, test_b = b
-                batch = test_b
+                batch = b
 
             test_mask = batch.test_mask
             data = batch.to(self.device)
             out = self.model(data)
+            correct2 = int((out.argmax(dim=-1) == data.y).sum())
 
+            print(out.argmax(dim=-1))
+            print(data.y)
+
+            print(f"Coorect {correct2}")
             if self._is_gin:
                 node_idx = torch.arange(out.shape[0]).to(self.device)
                 out_sum = torch.zeros((batch.num_nodes, out.shape[1]), dtype=torch.float).to(self.device)
@@ -454,27 +464,37 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--batch_size', type=int, default=32)
-    parser.add_argument('--epochs', type=int, default=10)
+    parser.add_argument('--epochs', type=int, default=100)
     parser.add_argument('--model_type', type=str, default='GCN3', choices=['GCN3', 'GIN', 'GAT'])
     parser.add_argument('--hidden_dim', type=int, default=32)
     parser.add_argument('--lr', type=float, default=0.01)
     parser.add_argument('--graph_per_instrument', type=bool, default=False)
+    parser.add_argument('--wandb', action='store_true', help='Track experiment')
+    parser.add_argument('--random_split', type=bool, default=False)
+
+    # init_wandb(name=f'GCN3-{args.dataset}', heads=args.heads, epochs=args.epochs,
+    #            hidden_channels=args.hidden_channels, lr=args.lr, device=device)
 
     args = parser.parse_args()
-    #
+    if args.random_split:
+        transform = T.Compose([
+            T.NormalizeFeatures(),
+            T.ToDevice(device),
+            T.RandomLinkSplit(
+                num_val=0.05,
+                num_test=0.1,
+                is_undirected=False,
+                split_labels=True,
+                add_negative_train_samples=False)
+        ])
+    else:
+        transform = T.Compose([
+            T.NormalizeFeatures(),
+            T.ToDevice(device),
+        ])
 
-    transform = T.Compose([
-        T.NormalizeFeatures(),
-        T.ToDevice(device),
-        T.RandomLinkSplit(
-            num_val=0.05,
-            num_test=0.1,
-            is_undirected=True,
-            split_labels=True,
-            add_negative_train_samples=False)
-    ])
-
-    ds = MidiDataset(root="./data", transform=transform, per_instrument_graph=args.graph_per_instrument)
+    ds = MidiDataset(root="./data", transform=transform,
+                     per_instrument_graph=args.graph_per_instrument)
 
     example = Example01(
         epochs=args.epochs,
@@ -482,5 +502,6 @@ if __name__ == '__main__':
         midi_dataset=ds,
         hidden_dim=args.hidden_dim,
         model_type=args.model_type,
-        lr=args.lr)
+        lr=args.lr,
+        is_relu=False)
     example.train()

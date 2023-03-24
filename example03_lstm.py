@@ -632,7 +632,7 @@ if __name__ == '__main__':
             T.RandomLinkSplit(
                 num_val=args.num_val,
                 num_test=args.num_test,
-                is_undirected=True,
+                is_undirected=False,
                 split_labels=True,
                 add_negative_train_samples=args.add_negative_train_samples)
         ])

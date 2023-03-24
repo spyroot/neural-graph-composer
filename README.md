@@ -112,6 +112,53 @@ tracks for the left and right hands, while an orchestral piece might have separa
 tracks for each instrument in the ensemble. By combining and synchronizing these 
 tracks, MIDI files can accurately represent complex musical performances.
 
+```python
+midi_seqs = MidiReader.read('neural_graph_composer/dataset/unit_test/test-c-major-scale.mid')
+    graph_builder = MidiGraphBuilder()
+    graph_builder.build(midi_seqs, is_per_instrument=False)
+    g = graph_builder.sub_graphs[0]
+
+    for node in g:
+        notes = graph_builder.hash_to_notes[node]
+        print(f"Hash: {node}, Notes: {notes}")
+        for neighbor in g.neighbors(node):
+            nei = graph_builder.hash_to_notes[neighbor]
+            weight = g.get_edge_data(node, neighbor)['weight']
+            print(f"  --> Neighbor: {nei}, Weight: {weight}")
+```
+
+Graph topology
+
+```bash
+Loading midi from a file neural_graph_composer/dataset/unit_test/test-c-major-scale.mid
+Hash: -5217121524421993263, Notes: frozenset({60})
+  --> Neighbor: frozenset({62}), Weight: 1.0
+Hash: -2848262261389850366, Notes: frozenset({62})
+  --> Neighbor: frozenset({64}), Weight: 1.0
+Hash: -4371591786916289942, Notes: frozenset({64})
+  --> Neighbor: frozenset({65}), Weight: 1.0
+Hash: -4645526162561829519, Notes: frozenset({65})
+  --> Neighbor: frozenset({67}), Weight: 1.0
+Hash: -391247606890768570, Notes: frozenset({67})
+  --> Neighbor: frozenset({69}), Weight: 1.0
+Hash: 7249655932884693306, Notes: frozenset({69})
+  --> Neighbor: frozenset({71}), Weight: 1.0
+Hash: -5931562334735143128, Notes: frozenset({71})
+  --> Neighbor: frozenset({72}), Weight: 1.0
+Hash: 9062470186675362595, Notes: frozenset({72})
+```
+
+PyG Data
+```python
+midi_seqs = MidiReader.read(
+    'neural_graph_composer/dataset/unit_test/test-c-major-scale.mid')
+
+graph_builder = MidiGraphBuilder()
+graph_builder.build(midi_seqs, is_per_instrument=False)
+for pyg_data in graph_builder:
+    print(pyg_data)
+```
+
 Representing music composition as graphs provides several advantages over other formats. 
 Graphs are a natural way to represent hierarchical structures, such as the 
 multiple tracks in a MIDI file. Nodes in the graph can represent individual notes, and 
