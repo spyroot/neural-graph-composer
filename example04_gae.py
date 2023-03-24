@@ -257,7 +257,6 @@ def test(data, model):
 
 def predict_link(model, x, edge_index, node_a, node_b):
     """
-
     :param model:
     :param x:
     :param edge_index:
@@ -273,7 +272,6 @@ def predict_link(model, x, edge_index, node_a, node_b):
 
 def node_clustering(model, x, edge_index, num_clusters):
     """
-
     :param model:
     :param x:
     :param edge_index:
@@ -290,7 +288,6 @@ def node_clustering(model, x, edge_index, num_clusters):
 
 def visualize_embeddings(model, x, edge_index):
     """
-
     :param model:
     :param x:
     :param edge_index:
@@ -374,7 +371,6 @@ def main(args):
             # auc_val, ap_val = metric_val
 
             print(f'Epoch: {epoch:03d}, Train Loss: {train_loss:.4f}, ')
-
             if epoch % args.save_interval == 0:
                 torch.save(model.state_dict(), f'{model_name}_epoch_{epoch}.pt')
 
@@ -435,16 +431,22 @@ def random_node_drop_checker():
         print("Number of nodes after transformation:", data.num_nodes)
 
 
+try:
+    import google.colab
+    IN_COLAB = True
+except:
+    IN_COLAB = False
+
 if __name__ == '__main__':
     """
     """
     parser = argparse.ArgumentParser()
     parser.add_argument('--variational', action='store_true')
     parser.add_argument('--linear', action='store_true')
+    parser.add_argument('--batch_size', type=int, default=32)
     parser.add_argument('--epochs', type=int, default=400)
     parser.add_argument('--save_interval', type=int, default=200)
     parser.add_argument('--wandb', action='store_true', help='Track experiment')
-
     args = parser.parse_args()
     main(args)
 

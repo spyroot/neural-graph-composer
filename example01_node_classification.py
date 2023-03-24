@@ -43,7 +43,9 @@ class GCN2(torch.nn.Module):
 
 
 class GCN3(torch.nn.Module):
-    def __init__(self, num_feature, hidden_channels, num_classes,
+    def __init__(self, num_feature,
+                 hidden_channels,
+                 num_classes,
                  is_relu: Optional[bool] = True):
         super(GCN3, self).__init__()
         self.conv1 = GCNConv(num_feature, hidden_channels)
@@ -74,8 +76,7 @@ class GCN3(torch.nn.Module):
 class GIN(torch.nn.Module):
     """
     """
-
-    def __init__(self, num_feature, hidden_channels, num_classes):
+    def __init__(self, num_feature, hidden_channels, num_classes: int):
         super(GIN, self).__init__()
         self.conv1 = GINConv(torch.nn.Sequential(
             torch.nn.Linear(num_feature, hidden_channels), torch.nn.ReLU(),
@@ -102,7 +103,6 @@ class GIN(torch.nn.Module):
 class GAT(torch.nn.Module):
     """
     """
-
     def __init__(self, num_feature, hidden_channels, num_classes,
                  use_edge_weights=True, dropout=0.3):
         super(GAT, self).__init__()
@@ -132,15 +132,15 @@ class GAT(torch.nn.Module):
         return F.log_softmax(x, dim=1)
 
 
-class Example01(Experiments):
+class ExampleNodeClassification(Experiments):
     def __init__(
-            self, epochs: int, batch_size: int,
+            self, epochs: int,
+            batch_size: int,
             midi_dataset: MidiDataset, hidden_dim: int,
             model_type: Optional[str] = "GCN3",
             lr: Optional[float] = 0.01,
             is_relu: Optional[bool] = True):
-        """
-           Example experiment for training a graph neural network on MIDI data.
+        """Example experiment for training a graph neural network on MIDI data.
         :param epochs:
         :param batch_size:
         :param hidden_dim:
@@ -158,12 +158,12 @@ class Example01(Experiments):
         self.datasize = 0
         self.test_size = 0
         self._num_workers = 0
+        self._is_gin = False
+        self._is_gat = False
         self._batch_size = batch_size
         self._hidden_dim = hidden_dim
         self._feature_dim = midi_dataset.num_node_features
         self._num_classes = midi_dataset.total_num_classes
-        self._is_gin = False
-        self._is_gat = False
         self._lr = lr
 
         self.train_dataset = midi_dataset
@@ -180,12 +180,14 @@ class Example01(Experiments):
 
         if model_type == "GCN3":
             print(f"Creating GCN3 feature dim: {self._feature_dim} "
-                  f"hidden size {self._hidden_dim} num classes {self._num_classes}")
+                  f"hidden size {self._hidden_dim} num classes "
+                  f"{self._num_classes} batch size {self._batch_size} lr {self._lr} is_rule {is_relu}")
             self.model = GCN3(
                 self._feature_dim, self._hidden_dim, self._num_classes, is_relu=is_relu)
         elif model_type == "GAT":
             print(f"Creating GAT feature dim: {self._feature_dim} "
-                  f"hidden size {self._hidden_dim} num classes {self._num_classes}")
+                  f"hidden size {self._hidden_dim} num classes "
+                  f"{self._num_classes} batch size {self._batch_size} lr {self._lr}")
             self.model = GAT(
                 self._feature_dim, self._hidden_dim, self._num_classes)
             self._is_gat = True
@@ -193,7 +195,8 @@ class Example01(Experiments):
             self.model = GIN(
                 self._feature_dim, self._hidden_dim, self._num_classes)
             print(f"Creating GIN feature dim: {self._feature_dim} "
-                  f"hidden size {self._hidden_dim} num classes {self._num_classes}")
+                  f"hidden size {self._hidden_dim} num classes "
+                  f"{self._num_classes} batch size {self._batch_size} lr {self._lr}")
             self._is_gin = True
 
         self.optimizer = torch.optim.Adam(
@@ -508,13 +511,13 @@ if __name__ == '__main__':
                      per_instrument_graph=args.graph_per_instrument,
                      tolerance=0.5)
 
-    example = Example01(
+    example = ExampleNodeClassification(
         epochs=args.epochs,
         batch_size=args.batch_size,
         midi_dataset=ds,
         hidden_dim=args.hidden_dim,
         model_type=args.model_type,
         lr=args.lr,
-        is_relu=False)
+        is_relu=True)
 
     example.train()
