@@ -81,6 +81,7 @@ class MidiGraphBuilder:
         # all sub graph for a same midi populate here.
         self._sub_graphs = []
         self.midi_sequences = midi_data
+        self.index = 0
 
     @property
     def sub_graphs(self) -> List[Graph]:
@@ -255,14 +256,16 @@ class MidiGraphBuilder:
     def build(self,
               midi_seqs: Optional[MidiNoteSequences] = None,
               default_trim_time: Optional[int] = 3,
-              max_vector_size: Optional[int] = 5,
+              feature_vec_size: Optional[int] = 12,
               velocity_num_buckets: Optional[int] = 8,
               node_attr_type: NodeAttributeType = NodeAttributeType.Tensor,
               filter_single_notes: Optional[bool] = False,
               tolerance: float = 0.2,
-              is_per_instrument: Optional[bool] = True):
+              is_per_instrument: Optional[bool] = True,
+              is_include_velocity: Optional[bool] = False):
         """
          Build a graph for one or more midi sequences.
+
         :param is_per_instrument: if False all instrument add to a single larger graph.
         :param tolerance:
         :param filter_single_notes:
@@ -271,8 +274,10 @@ class MidiGraphBuilder:
                                  if `default_trim_time=3`, notes played at `0.001` and`0.00001`
                                  would both be rounded to `0.000`
 
-        :param max_vector_size:
-        :param velocity_num_buckets:
+        :param feature_vec_size: size of feature vector. (Default 12)
+        :param velocity_num_buckets: number of bucket for velocity. ( Default 8)
+        :param is_include_velocity:  include or not velocity in feature vector.
+        :param is_include_velocity:  include or not velocity information in feature vector. (Default False)
         :param node_attr_type:  The type of attribute to use for each node in the graph.
                                 Can be either `NodeAttributeType.Tensor`
                                 or `NodeAttributeType.OneHotTensor`.
@@ -285,8 +290,8 @@ class MidiGraphBuilder:
         if not isinstance(default_trim_time, int):
             raise TypeError("default_trim_time must be an integer")
 
-        if not isinstance(max_vector_size, int):
-            raise TypeError("max_vector_size must be an integer")
+        if not isinstance(feature_vec_size, int):
+            raise TypeError("feature_vec_size must be an integer")
 
         if not isinstance(velocity_num_buckets, int):
             raise TypeError("velocity_num_buckets must be an integer")
@@ -299,12 +304,12 @@ class MidiGraphBuilder:
         for s in _midi_seq:
             g = self.build_sequence(
                 _midi_seq[s],
-                default_trim_time=default_trim_time,
-                max_vector_size=max_vector_size,
+                feature_vec_size=feature_vec_size,
                 velocity_num_buckets=velocity_num_buckets,
                 node_attr_type=node_attr_type,
                 filter_single_notes=filter_single_notes,
                 tolerance=tolerance,
+                is_include_velocity=is_include_velocity,
                 g=large_graph if not is_per_instrument else None
             )
 
@@ -385,25 +390,86 @@ class MidiGraphBuilder:
         return data, longest_note_sequence
 
     @staticmethod
-    def create_tensor(node_attr_type, pitch_set, max_vector_size):
-        """Create tensor for each node.
-        :param node_attr_type:
-        :param pitch_set:
-        :param max_vector_size:
+    def create_tensor(
+            node_attr_type: NodeAttributeType,
+            pitch_set,
+            velocity_set: Optional[Union[set, frozenset]] = None,
+            feature_vec_size: Optional[int] = 12,
+            num_classes: Optional[int] = None,
+            velocity_num_buckets: Optional[int] = 8) -> torch.Tensor:
+        """Create tensor for each node, node might have a set of pitch attach to it or set of pitches
+        and velocity where velocity is number of bucket.
+
+        For example
+        [60, 62, 64, 65, 67, 69, 71, 72]
+        [1, 0, 0, 0, 0, 0, 0, 3]
+
+        where the numbers in the velocity set correspond to the
+        number of notes with velocity in the corresponding bucket.
+        In this example, notes with velocity 0-9 are in bucket 0,
+        notes with velocity 20-29 are in bucket 2, and notes
+        with velocity 70-79 are in bucket 7, etc.
+
+        Example usage:
+        # create tensor for node with pitch set only
+        node_tensor = create_tensor(NodeAttributeType.OneHotTensor, pitch_set={60, 62, 64})
+
+        # create tensor for node with pitch and velocity sets
+        node_tensor = create_tensor(NodeAttributeType.OneHotTensor, pitch_set={60, 62, 64},
+                                    velocity_set={1, 3, 4, 5}, velocity_num_buckets=5)
+        for example
+
+        tensor([[64., 60., 62.,  0.],
+                [ 1.,  2.,  3.,  0.]])
+
+        :param node_attr_type: type of node attribute, can be either NodeAttributeType.Tensor
+                               or NodeAttributeType.OneHotTensor
+        :param pitch_set: a set of pitch values
+        :param velocity_set: a set of velocity values
+        :param feature_vec_size: size of the feature vector
+        :param num_classes: number of classes for one-hot encoding
+        :param velocity_num_buckets: number of buckets for velocity values
+        :return: a tensor of size feature_vec_size x 2 (if velocity_set is not None)
+                 or feature_vec_size x num_classes
         :return:
         """
+        # velocity_labels = torch.FloatTensor(list(velocity_set))
+        # velocity_buckets = torch.linspace(start=0, end=127, steps=velocity_num_buckets)
+        # velocity_bucket_indices = torch.bucketize(velocity_labels, boundaries=velocity_buckets)
+        # velocity_tensor = torch.tensor(velocity_bucket_indices).unsqueeze(1).float()
+        # print("vecl vecttor", velocity_tensor)
+        # print("vecl velocity_set", velocity_set)
+
         if node_attr_type == NodeAttributeType.Tensor:
             pitch_attr = torch.FloatTensor(list(pitch_set))
-            if pitch_attr.shape[0] > max_vector_size:
-                pitch_attr = pitch_attr[:max_vector_size]
-            new_x = torch.zeros(max_vector_size)
-            new_x[:pitch_attr.shape[0]] = pitch_attr
-            # print(new_x)
-            # new_x = torch.zeros(max_vector_size)
-            # new_x[:pitch_attr.shape[0]] = pitch_attr
+            velocity_attr = torch.FloatTensor(list(velocity_set)) if velocity_set is not None else None
+            if pitch_attr.shape[0] > feature_vec_size:
+                pitch_attr = pitch_attr[:feature_vec_size]
+            if velocity_set is not None:
+                pitch_tensor = torch.zeros(feature_vec_size)
+                vel_tensor = torch.zeros(feature_vec_size)
+                pitch_tensor[:pitch_attr.shape[0]] = pitch_attr
+                vel_tensor[:velocity_attr.shape[0]] = velocity_attr
+                pitch_tensor = pitch_tensor.unsqueeze(0)
+                vel_tensor = vel_tensor.unsqueeze(0)
+                new_x = torch.cat((pitch_tensor, vel_tensor), dim=0)
+            else:
+                new_x = torch.zeros(feature_vec_size)
+                new_x[:pitch_attr.shape[0]] = pitch_attr
         elif node_attr_type == NodeAttributeType.OneHotTensor:
-            labels_tensor = torch.FloatTensor(list(pitch_set))
-            new_x = torch.nn.functional.one_hot(labels_tensor, num_classes=127)
+            if num_classes is None:
+                num_classes = len(pitch_set)
+            if velocity_set is not None:
+                pitch_labels = torch.FloatTensor(list(pitch_set)).long()
+                velocity_labels = torch.FloatTensor(list(velocity_set))
+                pitches_one_hot = torch.nn.functional.one_hot(pitch_labels, num_classes=num_classes)
+                velocity_labels = velocity_labels.unsqueeze(1)
+                new_x = torch.cat([pitches_one_hot, velocity_labels], dim=-1)
+            else:
+                labels_tensor = torch.FloatTensor(list(pitch_set)).long()
+                new_x = torch.nn.functional.one_hot(
+                    labels_tensor, num_classes=num_classes
+                )
         else:
             raise ValueError("Unknown encoder type")
 
@@ -412,37 +478,59 @@ class MidiGraphBuilder:
     def build_sequence(
             self,
             seq: MidiNoteSequence,
-            default_trim_time: Optional[int] = 12,
-            max_vector_size: Optional[int] = 12,
+            feature_vec_size: Optional[int] = 12,
             velocity_num_buckets: Optional[int] = 8,
             node_attr_type: NodeAttributeType = NodeAttributeType.Tensor,
             filter_single_notes: bool = False,
             tolerance: float = 0.2,
+            is_include_velocity: Optional[bool] = False,
             g: Optional[nx.DiGraph] = None) -> nx.DiGraph:
 
         """Build a graph for single midi sequence for particular instrument.
         If we need merge all instrument to a single graph, caller
         need use build method that will merge all graph to a single large graph.
 
-        :param g:
+        :param seq: note seq object that store information about note seq.
+        :param feature_vec_size: dictate a feature vector size.
+        :param g: if you need add nodes to existing graph.
         :param filter_single_notes: filter out single notes if True, otherwise include them in the graph
-        :param tolerance:
-        :param filter_single_notes:
+        :param tolerance: dedicates tolerance between notes drift.
+        :param filter_single_notes:  Will filter all single note. so
+                                     final grap will have nodes only with more than > 1 note
         :param node_attr_type: dictates how we want re-present a node attribute.
                                as Tensor fixed size or as One hot vector
-        :param max_vector_size: dictate a maximum size of tensor.
-        :param seq:
-        :param default_trim_time: dictate time resolution
+        :param feature_vec_size: dictate a maximum size of tensor.
                                   for example note play at 0.001 and next note .00001
         :param velocity_num_buckets: some pitch are loud some are not.
                                      We use bins to present that.
                                      Midi vel is value from 0 to 255.
                                      We use 8 bins to represent that
+        :param is_include_velocity:   include velocity or not
         :return:
         """
+        print(f"feature vector size:    {feature_vec_size} "
+              f"velocity num buckets:   {velocity_num_buckets} "
+              f"node attr:              {node_attr_type} "
+              f"filter single:          {filter_single_notes} "
+              f"tolerance:              {tolerance}")
+
         if not isinstance(seq, MidiNoteSequence):
             raise TypeError(f"midi_sequences must be an instance of "
                             f"MidiNoteSequence but received {type(seq)}")
+        if feature_vec_size is not None:
+            if not isinstance(feature_vec_size, int) or feature_vec_size <= 0 or feature_vec_size > 128:
+                raise ValueError("Feature vector size must be an integer between 1 and 128.")
+        if velocity_num_buckets is not None:
+            if not isinstance(velocity_num_buckets, int) or velocity_num_buckets <= 0:
+                raise ValueError("Number of velocity buckets must be a positive integer.")
+        if not isinstance(node_attr_type, NodeAttributeType):
+            raise ValueError("Node attribute type must be a NodeAttributeType object.")
+        if not isinstance(filter_single_notes, bool):
+            raise ValueError("The flag 'filter_single_notes' must be a boolean.")
+        if not isinstance(tolerance, float) or tolerance < 0 or tolerance > 1:
+            raise ValueError("Tolerance must be a float between 0 and 1.")
+        if is_include_velocity is not None and not isinstance(is_include_velocity, bool):
+            raise ValueError("The flag 'is_include_velocity' must be a boolean.")
 
         data, longest_note_sequence = self.compute_data(seq, tolerance, filter_single_notes)
         if not data:
@@ -482,12 +570,12 @@ class MidiGraphBuilder:
 
             # a pitch a set of pitches and velocity for each pitch
             pitch_set = frozenset(n.pitch for n in notes)
-            pitch_vel_set = frozenset(n.velocity // velocity_num_buckets for n in notes)
-
-            # pitch name are attribute of node
+            velocity_set = None
+            if is_include_velocity:
+                velocity_set = frozenset(n.velocity // velocity_num_buckets for n in notes)
             pitch_names = frozenset(librosa.midi_to_note(n.pitch) for n in notes)
-            # a hash of set is node
-            # i.e  {C0, F0, E0} respected MIDI num {x,y,z} form a hash
+
+            # a hash of set is node  {C0, F0, E0} respected MIDI num {x,y,z} form a hash
             new_node_hash = hash(pitch_set)
             # we add hash for a given pitch_set to dict,
             # so we can recover if we need 2
@@ -500,9 +588,20 @@ class MidiGraphBuilder:
             if node_attr_type not in self.ENCODINGS:
                 raise ValueError("Unknown encoder type")
 
-            new_x = self.create_tensor(node_attr_type, pitch_set, max_vector_size)
+            new_x = self.create_tensor(
+                node_attr_type,
+                pitch_set,
+                velocity_set=velocity_set,
+                feature_vec_size=feature_vec_size,
+                num_classes=127,
+                velocity_num_buckets=velocity_num_buckets
+            )
+
             if last_node_hash is None:
-                midi_graph.add_node(new_node_hash, attr=new_x, label=new_node_hash, node_hash=new_node_hash)
+                midi_graph.add_node(
+                    new_node_hash, attr=new_x,
+                    label=new_node_hash, node_hash=new_node_hash
+                )
             else:
                 # if node already connected update weight
                 # print(f" checking connectivity {self.hash_to_notes[new_node_hash]}
@@ -575,15 +674,14 @@ class MidiGraphBuilder:
         :return: a generator of PygData objects for each sub-graph
         """
         if not self._hash_to_notes:
-            raise ValueError("hash_to_notes is empty")
+            raise ValueError("hash to notes is empty.")
 
         # allocate idx for each hash value.
-        index = 0
         for node_hash in self._hash_to_notes:
             if node_hash not in self.hash_to_index:
-                self._hash_to_index[node_hash] = index
-                self._index_to_hash[index] = node_hash
-                index += 1
+                self._hash_to_index[node_hash] = self.index
+                self._index_to_hash[self.index] = node_hash
+                self.index += 1
 
         for g in self._pyg_data or []:
             node_hash = [self.hash_to_index[node_hash] for node_hash in g.node_hash]

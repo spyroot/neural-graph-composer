@@ -1,3 +1,9 @@
+"""
+Example Node classification based on 3 models.
+
+Graph Neural Ntwork layer
+
+"""
 import argparse
 import os
 from typing import Optional
@@ -208,10 +214,12 @@ class Example01(Experiments):
         y_train_all = []
 
         for i, b in enumerate(self.train_loader):
-            if isinstance(b, list):
-                train_batch, _, _ = b
-            else:
-                train_batch = b
+            train_batch = b
+
+            # if isinstance(b, list):
+            #     train_batch, _, _ = b
+            # else:
+            #     train_batch = b
 
             train_batch.to(self.device)
             self.optimizer.zero_grad()
@@ -328,8 +336,8 @@ class Example01(Experiments):
 
             loss_avg, train_f1, train_acc, train_recall, train_precision = self.train_epoch()
             # train_acc, train_f1, train_precision, train_recall = self.evaluate(self.train_loader)
-            val_acc, val_f1, val_precision, val_recall = self.evaluate(self.val_loader)
-            test_acc, test_f1, test_precision, test_recall = self.evaluate(self.test_loader)
+            # val_acc, val_f1, val_precision, val_recall = self.evaluate(self.val_loader)
+            # test_acc, test_f1, test_precision, test_recall = self.evaluate(self.test_loader)
 
             train_losses.append(loss_avg)
             train_f1s.append(train_f1)
@@ -337,22 +345,22 @@ class Example01(Experiments):
             train_recalls.append(train_recall)
             train_precisions.append(train_precision)
 
-            val_accs.append(val_acc)
-            val_f1s.append(val_f1)
-            val_precisions.append(val_precision)
-            val_recalls.append(val_recall)
+            # val_accs.append(val_acc)
+            # val_f1s.append(val_f1)
+            # val_precisions.append(val_precision)
+            # val_recalls.append(val_recall)
+            #
+            # test_accs.append(test_acc)
+            # test_f1s.append(test_f1)
+            # test_precisions.append(test_precision)
+            # test_recalls.append(test_recall)
 
-            test_accs.append(test_acc)
-            test_f1s.append(test_f1)
-            test_precisions.append(test_precision)
-            test_recalls.append(test_recall)
+            # if val_acc > best_val_acc:
+            #     best_val_acc = val_acc
+            #     best_epoch = e
+            #     best_test_acc = test_acc
 
-            if val_acc > best_val_acc:
-                best_val_acc = val_acc
-                best_epoch = e
-                best_test_acc = test_acc
-
-            if e % 5 == 0:
+            if e % 1 == 0:
                 print(
                     f"Epoch: {e}, "
                     f"Loss: {loss_avg:.5f}, "
@@ -376,10 +384,10 @@ class Example01(Experiments):
                     f"Test Precision: {test_precision:.5f}, "
                     f"Test Recall: {test_recall:.5f}")
 
-            if val_acc > best_val_acc:
-                best_val_acc = val_acc
-                best_epoch = e
-                best_test_acc = test_acc
+            # if val_acc > best_val_acc:
+            #     best_val_acc = val_acc
+            #     best_epoch = e
+            #     best_test_acc = test_acc
 
         print(f"Best Epoch: {best_epoch}, Test Acc: {best_test_acc:.5f}")
         self.plot_metrics(
@@ -403,6 +411,7 @@ class Example01(Experiments):
         tp = 0
         fp = 0
         fn = 0
+
         for b in data_loader:
             if isinstance(b, list):
                 if eval_type == "val":
@@ -417,12 +426,12 @@ class Example01(Experiments):
             test_mask = batch.test_mask
             data = batch.to(self.device)
             out = self.model(data)
-            correct2 = int((out.argmax(dim=-1) == data.y).sum())
 
+            correct2 = int((out.argmax(dim=-1) == data.y).sum())
             print(out.argmax(dim=-1))
             print(data.y)
+            print(f"correct {correct2}")
 
-            print(f"Coorect {correct2}")
             if self._is_gin:
                 node_idx = torch.arange(out.shape[0]).to(self.device)
                 out_sum = torch.zeros((batch.num_nodes, out.shape[1]), dtype=torch.float).to(self.device)
@@ -460,8 +469,9 @@ class Example01(Experiments):
 
 
 if __name__ == '__main__':
+    """
+    """
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
     parser = argparse.ArgumentParser()
     parser.add_argument('--batch_size', type=int, default=32)
     parser.add_argument('--epochs', type=int, default=100)
@@ -489,12 +499,14 @@ if __name__ == '__main__':
         ])
     else:
         transform = T.Compose([
-            T.NormalizeFeatures(),
+            # T.NormalizeFeatures(),
             T.ToDevice(device),
         ])
 
-    ds = MidiDataset(root="./data", transform=transform,
-                     per_instrument_graph=args.graph_per_instrument)
+    ds = MidiDataset(root="./data",
+                     transform=transform,
+                     per_instrument_graph=args.graph_per_instrument,
+                     tolerance=0.5)
 
     example = Example01(
         epochs=args.epochs,
@@ -504,4 +516,5 @@ if __name__ == '__main__':
         model_type=args.model_type,
         lr=args.lr,
         is_relu=False)
+
     example.train()

@@ -11,7 +11,7 @@ from neural_graph_composer.midi_reader import MidiReader
 
 def example_one():
     """
-        """
+    """
     midi_seqs = MidiReader.read(
         'neural_graph_composer/dataset/unit_test/test-c-major-scale.mid')
     print(midi_seqs)
@@ -62,6 +62,10 @@ def example_one():
 
 
 def example_two():
+    """
+
+    :return:
+    """
     notes = [
         MidiNote(pitch=60, start_time=0.0, end_time=0.5),
         MidiNote(pitch=61, start_time=1.0, end_time=1.5),
@@ -90,7 +94,6 @@ def example_two():
 
 def example_three():
     """
-
     :return:
     """
     midi_seqs = MidiReader.read(
@@ -106,134 +109,52 @@ def example_three():
 
 
 def index_to_hash():
-    # transform = T.Compose([
-    #     T.NormalizeFeatures(),
-    # ])
+    """Iterate and does reverse check, so we can
+      get Data.x and Data.y -> hash -> index -> pitch set
+    :return:
+    """
+    midi_dataset = MidiDataset(root="./data",
+                               per_instrument_graph=False)
 
-    ds = MidiDataset(root="./data",
-                     per_instrument_graph=False)
+    train_mask = midi_dataset[0].train_mask
+    data_x = midi_dataset.data.x[train_mask]
+    data_y = midi_dataset.data.y[train_mask]
+    data_label = midi_dataset.data.label[train_mask]
 
-    train_mask = ds[0].train_mask
-    print("mask", train_mask)
-    print(ds[0])
-    data = ds[0]
-    data.y[train_mask]
-    print(data.x[100])
-    print(data.y[100])
-    print(data.label[100])
+    print("Data.y", data_y)
+    print("Data.x", data_x)
+    print("Data.label", data_label)
 
-    print(list(ds.index_to_hash.values())[0])
-    print(list(ds.hash_to_index.values())[0])
-    print(list(ds.hash_to_notes.values())[0])
-    print(list(ds.notes_to_hash.values())[0])
-
-    # node_hash = ds.index_to_hash[data.y[100].item()]
-    # original_index = ds.hash_to_index[node_hash]
-    # node_features = data.x[original_index]
-    # print(node_features)
-    #
-    # print(original_index)
-    # print(ds.index_to_hash[8])
-    # print(ds.hash_to_notes[node_hash])
-    #
-    # print(data.y[100].item())
-    # print(data.label[100].item())
-    # note_set_hash = ds.index_to_hash[data.y[100].item()]
-    # print(note_set_hash)
-    # print(ds.hash_to_notes[note_set_hash])
-    #
-    n_nodes = data.y.size(0)
-    # original_indices = [i for i in range(n_nodes)]
-    # node_index = 100
-    #
-    # # get the original index of the node
-    # original_index = original_indices[data.y[node_index].item()]
-    # print(original_indices)
-    #
-    # # # use the original index to get the corresponding node hash value
-    # node_hash = ds.index_to_hash[original_index]
-    # print(node_hash)
-    #
-    # # # use the node hash value to get the set of notes it represents
-    # notes_set = ds.hash_to_notes[node_hash]
-    # print(notes_set)
-    #
-    # # # use the original index to get the node features
-    # node_features = data.x[original_index]
-    # # # print the set of notes and the corresponding node features
-    # # print("Node hash value:", node_hash)
-    # # print("Set of notes:", notes_set)
-    # print("Node features:", node_features)
-    #
-    # 6221080727990553348
-    # frozenset({58, 61, 63})
-    # Node
-    # features: tensor([36., 0., 0., 0., 0.])
-
-    original_indices = [i for i in range(n_nodes)]
-    node_index = 100
-
-    # get the original index of the node
-    original_index = original_indices[data.y[node_index].item()]
-    print(original_indices)
-
-    # use the original index to get the set of notes represented by the node
-    notes_set = ds.hash_to_notes[ds.index_to_hash[data.y[node_index].item()]]
-    print("note set", notes_set)
-    # use the set of notes to look up the corresponding hash value
-    node_hash = ds.notes_to_hash[notes_set]
-    print(node_hash)
-
-    # use the node hash value to get the node features
-    node_features = data.x[original_index]
-    print("Node features:", node_features)
-
-    train_ds = MidiDataset(root="./data")
-    data_x = train_ds.data.x[train_mask]
-    data_y = train_ds.data.y[train_mask]
-    data_label = train_ds.data.label[train_mask]
-
-    node_index = 100
-    original_index = data_y[node_index].item()
-
-    # get the corresponding node hash value
-    node_hash = train_ds.index_to_hash[original_index]
-
-    # get the set of notes it represents
-    notes_set = train_ds.hash_to_notes[node_hash]
-
-    # get the node features
-    node_features = data_x[node_index]
-
-    print("Original index:", original_index)
-    print("Node hash value:", node_hash)
-    print("Set of notes:", notes_set)
-    print("Node features:", node_features)
-
-    # train_ds.data = train_ds.data[train_ds.data['train_mask']]
-    #
-    # node_index = 100
-    # original_index = train_ds.data.y[node_index].item()
-    #
-    # # use the original index to get the set of notes represented by the node
-    # notes_set = ds.hash_to_notes[ds.index_to_hash[original_index]]
-    # print("Note set", {notes_set})
-    # node_hash = ds.notes_to_hash[notes_set]
-    # print(node_hash)
-    #
-    # # use the node hash value to get the node features
-    # node_features = train_ds.data.x[node_index]
-    # print("Node features:", node_features)
+    for i in range(data_x.shape[0]):
+        node_features = data_x[i]
+        original_index = data_y[i].item()
+        hash_of_index = midi_dataset.index_to_hash[original_index]
+        original_set_of_notes = midi_dataset.hash_to_notes[hash_of_index]
+        original_set_tensor = torch.tensor(list(original_set_of_notes))
+        original_set_zero = torch.zeros((data_x.shape[0],))
+        original_set_tensor = torch.cat((original_set_tensor, original_set_zero), dim=0)[:data_x.shape[1]].unsqueeze(0)
+        node_features = node_features.unsqueeze(0)
+        sorted_node_features, _ = torch.sort(node_features)
+        sorted_original_set_tensor, _ = torch.sort(original_set_tensor)
+        if not torch.equal(sorted_node_features, sorted_original_set_tensor):
+            print(f"Error for index {i}, hash {hash_of_index}, notes {original_set_of_notes}:")
+            print(sorted_node_features, sorted_original_set_tensor)
 
 
-if __name__ == '__main__':
+def index_checker():
+    """
 
+    :return:
+    """
+    # we build
     graph_builder = MidiGraphBuilder(
         None, is_instrument_graph=True)
 
+    # we use to same files
     raw_paths = ['data/raw/a_night_in_tunisia_2_jc.mid',
                  'data/raw/a_night_in_tunisia_2_jc.mid']
 
+    #
     pyg_data_list = []
     for raw_path in raw_paths:
         midi_seqs = MidiReader.read(raw_path)
@@ -308,8 +229,8 @@ if __name__ == '__main__':
     print("Feature vector", data_x[33])
     print("label ", data_y[33])
     hash_of_33 = midi_dataset.index_to_hash[
-              data_y[33].item()
-          ]
+        data_y[33].item()
+    ]
     print("Hash of index 33", midi_dataset.hash_to_notes[hash_of_33])
 
     for i in range(data_x.shape[0]):
@@ -327,3 +248,78 @@ if __name__ == '__main__':
         if not torch.equal(sorted_node_features, sorted_original_set_tensor):
             print(f"Error for index {i}, hash {hash_of_index}, notes {original_set_of_notes}:")
             print(node_features, original_set_tensor)
+
+
+def tolerance_checker():
+    """This test generally better perform
+    with understanding drift between a notes and then check
+    note groups or not.
+    :return:
+    """
+    # we use to same files
+    raw_paths = ['data/raw/a_night_in_tunisia_2_jc.mid']
+
+    midi_dataset = MidiDataset(root="./data_test",
+                               midi_files=raw_paths,
+                               per_instrument_graph=False,
+                               tolerance=0.5)
+
+    train_mask = midi_dataset[0].train_mask
+    data_x = midi_dataset.data.x[train_mask]
+    data_y = midi_dataset.data.y[train_mask]
+    data_label = midi_dataset.data.label[train_mask]
+
+    print("Data.y", data_y)
+    print("Data.x", data_x)
+    print("Data.label", data_label)
+
+
+def different_datasets():
+    """Create different type dataset.
+       Include velocity will add velocity vector.
+    :return:
+    """
+    # include velocity
+    # midi_dataset = MidiDataset(root="./data",
+    #                            per_instrument_graph=False,
+    #                            include_velocity=True)
+    # print(midi_dataset[0])
+    #
+    # # no velocity
+    # midi_dataset = MidiDataset(root="./data",
+    #                            per_instrument_graph=False,
+    #                            include_velocity=False)
+    # print(midi_dataset[0])
+
+    # adjust tolerance
+    midi_dataset = MidiDataset(root="./data",
+                               per_instrument_graph=False,
+                               include_velocity=False,
+                               tolerance=0.5)
+    print(midi_dataset[0])
+    print(midi_dataset[8].x)
+
+    midi_dataset = MidiDataset(root="./data",
+                               per_instrument_graph=False,
+                               include_velocity=False,
+                               tolerance=0.5)
+    print(midi_dataset[0])
+    print(midi_dataset[8].x)
+
+    # per instrument graph
+    midi_dataset = MidiDataset(root="./data",
+                               per_instrument_graph=False,
+                               include_velocity=False,
+                               tolerance=0.5)
+    print(midi_dataset[0])
+    print(midi_dataset[8].x)
+
+
+if __name__ == '__main__':
+    """
+    """
+    print("Tolerance checker:")
+    tolerance_checker()
+
+    print("Dataset creation checker:")
+    different_datasets()

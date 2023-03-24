@@ -8,10 +8,11 @@ from neural_graph_composer.midi.midi_instruments import MidiInstrumentInfo
 from neural_graph_composer.midi.midi_note import MidiNote
 from neural_graph_composer.midi.midi_sequence import MidiNoteSequence
 from neural_graph_composer.midi.midi_sequences import MidiNoteSequences
-from neural_graph_composer.midi_graph_builder import MidiGraphBuilder
+from neural_graph_composer.midi_graph_builder import MidiGraphBuilder, NodeAttributeType
 import networkx as nx
 
 from tests.test_utils import generate_triads
+from typing import List
 
 
 class Test(TestCase):
@@ -426,3 +427,69 @@ class Test(TestCase):
             # we expect each sub-graph be a size of num triads.
             self.assertTrue(np_adj.shape[0], num_triads)
             self.assertTrue(np_adj.shape[1], num_triads)
+
+    def test_tensor(self):
+        """
+        :return:
+        """
+        pitch_set = {60, 62, 64}
+        velocity_set = {1, 2, 3}
+        print(pitch_set)
+        print(velocity_set)
+        x = MidiGraphBuilder.create_tensor(NodeAttributeType.Tensor,
+                                           pitch_set, velocity_set,
+                                           feature_vec_size=4)
+        expected_x = torch.tensor([[64., 60., 62, 0],
+                                   [1., 2., 3., 0.]])
+        self.assertTrue(torch.all(torch.eq(x, expected_x)))
+
+    def test_tensor2(self):
+        """
+        :return:
+        """
+        pitch_set = {60, 62, 64}
+        velocity_set = {1, 2, 3}
+        print(pitch_set)
+        print(velocity_set)
+        x = MidiGraphBuilder.create_tensor(NodeAttributeType.Tensor,
+                                           pitch_set,
+                                           feature_vec_size=4)
+        expected_x = torch.tensor([64., 60., 62, 0])
+        self.assertTrue(torch.all(torch.eq(x, expected_x)))
+
+    def test_create_tensor_one_hot(self):
+        """
+
+        :return:
+        """
+        pitch_set = {60, 62, 64}
+        velocity_set = {1, 3, 2}
+        x = MidiGraphBuilder.create_tensor(NodeAttributeType.OneHotTensor,
+                                           pitch_set, velocity_set,
+                                           feature_vec_size=4,
+                                           num_classes=127,
+                                           velocity_num_buckets=8)
+        expect = torch.tensor([[0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
+                                0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
+                                0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
+                                0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 1., 0., 0., 0., 0., 0., 0., 0.,
+                                0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
+                                0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
+                                0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
+                                0., 1.],
+                               [0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
+                                0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
+                                0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
+                                0., 0., 0., 0., 0., 0., 1., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
+                                0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
+                                0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
+                                0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
+                                0., 2.],
+                               [0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
+                                0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
+                                0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
+                                0., 0., 0., 0., 0., 0., 0., 0., 1., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
+                                0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
+                                0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
+                                0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
+                                0., 3.]])

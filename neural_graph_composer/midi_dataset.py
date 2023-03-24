@@ -9,15 +9,11 @@ from pathlib import Path
 import numpy as np
 import torch
 from torch_geometric.data import InMemoryDataset, extract_tar
-from torch_geometric.data import download_url
 
 from .midi_graph_builder import MidiGraphBuilder
 from .midi_reader import MidiReader
 from torch_geometric.data import InMemoryDataset, download_url, extract_zip
-
 from torch.utils.data import Dataset
-from torch_geometric.data import Data
-from torch_geometric.loader import DataLoader
 
 
 class NodeHashIndexMapper:
@@ -65,8 +61,8 @@ class MidiDataset(InMemoryDataset):
     per_graph_slit dictates if we want threat each instrument as separate graph.
     or we want merge
 
-
     """
+
     def __init__(self,
                  root,
                  transform: Optional[Callable] = None,
@@ -79,11 +75,44 @@ class MidiDataset(InMemoryDataset):
                  val_ratio: Optional[float] = 0.15,
                  per_instrument_graph: Optional[bool] = True,
                  per_graph_slit: Optional[bool] = True,
-                 default_midi_loc: str = "~/dev/neural-graph-composer/neural_graph_composer/dataset"
-                 ):
-        """
-        default_midi_loc used to indicate a directory where
-        all MIDI files.
+                 default_midi_loc: str = "~/dev/neural-graph-composer/neural_graph_composer/dataset",
+                 feature_vec_size: Optional[int] = 12,
+                 velocity_num_buckets: Optional[int] = 8,
+                 tolerance: float = 0.2,
+                 filter_single_notes: Optional[bool] = False,
+                 include_velocity: Optional[bool] = False):
+        """Default_midi_loc used to indicate a directory where all MIDI files.
+
+            Example usage offline:
+
+            raw_paths = [
+            'data/raw/a_night_in_tunisia_2_jc.mid',
+            'data/raw/a_night_in_tunisia_2_jc.mid'
+            ]
+
+            midi_dataset = MidiDataset(root="./data_test",
+                               midi_files=raw_paths,
+                               per_instrument_graph=False)
+
+            It will crete data_test dir copy all files
+            to raw folder as any dataset.
+
+            Note it will always copy, so we have same behavior as online.
+            If caller indicate files it will use this file and copy
+            row and produce Dataset.
+
+            Example usage online:  This will check raw dir
+            and if files not present will download.
+
+            midi_dataset = MidiDataset(root="./data_test",
+                   per_instrument_graph=False)
+
+            So you can first create and then call without
+            it will essentially create custom dataset.
+
+            midi_dataset = MidiDataset(root="./data_test",
+                   midi_files=raw_paths,
+                   per_instrument_graph=False)
 
         :param root: Root directory where the dataset should be saved.
         :param transform:  A function/transform that takes in an
@@ -102,6 +131,42 @@ class MidiDataset(InMemoryDataset):
         :param val_ratio: Validation ratio (default 0.15).
         :param per_graph_slit: Whether to split the dataset into graphs.
         """
+
+        if not isinstance(root, str):
+            raise TypeError("root must be a string.")
+        if transform is not None and not callable(transform):
+            raise TypeError("transform must be a callable.")
+        if pre_transform is not None and not callable(pre_transform):
+            raise TypeError("pre_transform must be a callable.")
+        if pre_filter is not None and not callable(pre_filter):
+            raise TypeError("pre_filter must be a callable.")
+        if not isinstance(default_node_attr, str):
+            raise TypeError("default_node_attr must be a string.")
+        if midi_files is not None and not isinstance(midi_files, list):
+            raise TypeError("midi files must be a list of strings.")
+        if not isinstance(default_webserver, str):
+            raise TypeError("default webserver must be a string.")
+        if not isinstance(train_ratio, (float, int)):
+            raise TypeError("train ratio must be a float or an integer.")
+        if not isinstance(val_ratio, (float, int)):
+            raise TypeError("validation ratio must be a float or an integer.")
+        if not isinstance(per_instrument_graph, bool):
+            raise TypeError("per instrument graph must be a boolean.")
+        if not isinstance(per_graph_slit, bool):
+            raise TypeError("per graph slit must be a boolean.")
+        if not isinstance(default_midi_loc, str):
+            raise TypeError("default midi loc must be a string.")
+        if feature_vec_size is not None and not isinstance(feature_vec_size, int):
+            raise TypeError("feature vec size must be an integer.")
+        if velocity_num_buckets is not None and not isinstance(velocity_num_buckets, int):
+            raise TypeError("velocity num buckets must be an integer.")
+        if not isinstance(tolerance, float):
+            raise TypeError("tolerance must be a float.")
+        if not isinstance(filter_single_notes, bool):
+            raise TypeError("filter single_notes must be a boolean.")
+        if not isinstance(include_velocity, bool):
+            raise TypeError("include velocity must be a boolean.")
+
         if midi_files is not None:
             if not isinstance(midi_files, list):
                 raise ValueError("midi_files should be a list of strings.")
@@ -117,46 +182,57 @@ class MidiDataset(InMemoryDataset):
         if train_ratio + val_ratio > 1:
             raise ValueError("The sum of train_ratio and val_ratio should be less than or equal to 1.")
 
+        if feature_vec_size is not None and (feature_vec_size < 1 or feature_vec_size > 128):
+            raise ValueError("feature_vec_size must be between 1 and 128 (inclusive)")
+
+        if velocity_num_buckets is not None and velocity_num_buckets < 1:
+            raise ValueError("velocity_num_buckets must be greater than or equal to 1")
+
         self.logger = logging.getLogger(__name__ + '.' + self.__class__.__name__)
         self.logger.setLevel(logging.WARNING)
+
+        self._offline = False
 
         self.files = []
         if midi_files is not None:
             self.files = midi_files
-        else:
-            for r, _, f in os.walk(root):
-                for file in f:
-                    if '.mid' in file:
-                        self.files.append(os.path.join(r, file))
+            self._offline = True
 
-        # root = osp.expanduser(osp.normpath(root))
-        # self.root = root
         self._default_loc = Path(default_midi_loc).expanduser().resolve()
         self.__url = default_webserver
-        self.__node_attr_name = default_node_attr
         self.__train_ratio = train_ratio
         self.__val_ratio = val_ratio
         self.__is_instrument_graph = per_instrument_graph
         self.__mask_instruments = per_graph_slit
         self.__hidden_channels = 64
-        self.__node_attr_name = default_node_attr
-        # self.__dataset_length = len(self.__data_list)
+
+        #
+        self.node_attr_name = default_node_attr
+        self.feature_vec_size = feature_vec_size
+        self.velocity_num_buckets = velocity_num_buckets
+        self.filter_single_notes = filter_single_notes
+        self.include_velocity = include_velocity
+        self.tolerance = tolerance
+        self.default_trim_time = 3
         self.all_classes = set()
 
         self.data_list = None
         self.__data_list = None
         self._graph_builder = None
-
         self._num_instruments = {}
 
-        print(f"default_node_attr: {self.__train_ratio}")
-        print(f"transform: {self.__val_ratio}")
-        print(f"per_instrument_graph: {self.__is_instrument_graph}")
-        print(f"pre_filter: {pre_filter}")
+        logging.debug(f"default_node_attr:      {self.__train_ratio}")
+        logging.debug(f"transform:              {self.__val_ratio}")
+        logging.debug(f"per_instrument_graph:   {self.__is_instrument_graph}")
+        logging.debug(f"pre_filter:             {pre_filter}")
+        print(f"processed_file_names:           {self.processed_file_names}")
+
+        self._graph_builder = MidiGraphBuilder(None)
+
         super().__init__(root, transform, pre_transform, pre_filter)
 
         for path in self.processed_paths:
-            print(f"Using processed data at {path}")
+            logging.debug(f"Using processed data at {path}")
 
         # all read-only properties
         self._notes_to_hash = {}
@@ -202,14 +278,12 @@ class MidiDataset(InMemoryDataset):
         """Load the processed data from disk,  depending on the flag.
         :return:
         """
-        print("Loading processed")
-
         if self.__is_instrument_graph:
-            print(f"Loading {self.processed_dir} per_instrument_data.pt")
-            data_path = osp.join(self.processed_dir, 'per_instrument_data.pt')
+            print(f"Loading {self.processed_dir} {self.processed_file_names[0]}")
+            data_path = osp.join(self.processed_dir, self.processed_file_names[0])
         else:
-            print(f"Loading {self.processed_dir} data.pt")
-            data_path = osp.join(self.processed_dir, 'data.pt')
+            print(f"Loading {self.processed_dir} {self.processed_file_names[1]}")
+            data_path = osp.join(self.processed_dir, self.processed_file_names[1])
 
         data = torch.load(data_path)
         if not isinstance(data, tuple) or len(data) != 3:
@@ -267,14 +341,13 @@ class MidiDataset(InMemoryDataset):
             return [f for f in os.listdir(midi_files_dir)
                     if os.path.isfile(os.path.join(midi_files_dir, f))
                     and f.endswith('.mid')
-                ]
+                    ]
 
     def processed_file_exists(self):
         """Check if processed file already exists.
         :return: boolean
         """
         print("Checking files.")
-
         if not osp.exists(self.processed_dir):
             return False
 
@@ -296,17 +369,14 @@ class MidiDataset(InMemoryDataset):
         """
         :return:
         """
-        return ['per_instrument_data.pt', 'data.pt']
-        # files = []
-        # p = Path(self.processed_dir)
-        # if not p.exists():
-        #     return files
-        #
-        # for x in os.listdir(self.processed_dir):
-        #     if x.startswith("data") and x.endswith(".pt"):
-        #         files.append(x)
-        #
-        # return files
+        return [f'per_instrument_'
+                f'vel_{self.include_velocity}_'
+                f'feature_size_{self.feature_vec_size}_'
+                f'tolerance_{str(self.tolerance)}.pt',
+                f'data_'
+                f'vel_{self.include_velocity}_'
+                f'feature_size_{self.feature_vec_size}_'
+                f'tolerance_{str(self.tolerance)}.pt']
 
     def compute_statistics(self):
         """
@@ -345,8 +415,8 @@ class MidiDataset(InMemoryDataset):
          instead of downloading them.
         :return:
         """
-        print(f"raw_file_names {self.raw_file_names}")
-        if len(self.files) > 0:
+        logging.debug(f"raw_file_names {self.raw_file_names}")
+        if len(self.files) > 0 and self._offline:
             for i, raw_file in enumerate(self.raw_file_names):
                 p = Path(raw_file).expanduser().resolve()
                 if not p.exists():
@@ -355,11 +425,11 @@ class MidiDataset(InMemoryDataset):
                     dst_path = os.path.join(self.raw_dir, p.name)
                     self.files[i] = p.name
                     src_path = os.path.abspath(str(p))
-                    print(f"Downloading {src_path} to {dst_path}")
+                    logging.debug(f"Downloading {src_path} to {dst_path}")
                     shutil.copy(src_path, dst_path)
         else:
             for raw_file in self.raw_file_names:
-                print(f"Downloading {raw_file}")
+                logging.debug(f"Downloading {raw_file}")
                 path = download_url(f"{self.__url}/{raw_file}", self.raw_dir)
                 if raw_file.endswith(".zip"):
                     extract_zip(path, self.raw_dir)
@@ -374,9 +444,6 @@ class MidiDataset(InMemoryDataset):
         if self.__data_list is None:
             self.__data_list = []
 
-        self._graph_builder = MidiGraphBuilder(
-            None, is_instrument_graph=True)
-
         if self._graph_builder is None:
             print("Warning: self.graph_builder is None")
 
@@ -387,7 +454,16 @@ class MidiDataset(InMemoryDataset):
                 midi_seqs = MidiReader.read(raw_path)
                 if raw_path not in self._num_instruments:
                     self._num_instruments[raw_path] = midi_seqs.num_instruments()
-                self._graph_builder.build(midi_seqs)
+                self._graph_builder.build(
+                    midi_seqs,
+                    default_trim_time=self.default_trim_time,
+                    feature_vec_size=self.feature_vec_size,
+                    velocity_num_buckets=self.velocity_num_buckets,
+                    filter_single_notes=self.filter_single_notes,
+                    tolerance=self.tolerance,
+                    is_include_velocity=self.include_velocity,
+                    is_per_instrument=True
+                )
 
                 # graph_builder output iterator
                 for midi_data in self._graph_builder.graphs():
@@ -420,6 +496,31 @@ class MidiDataset(InMemoryDataset):
             except KeyError as ker_err:
                 print(f"Error in file {raw_path} error: {ker_err}")
 
+    @staticmethod
+    def __sanity_checker(self, data, index_to_hash, hash_to_notes):
+        """
+        :return:
+        """
+        data_x = data.x[data.train_mask]
+        data_y = data.y[data.train_mask]
+
+        for i in range(data_x.shape[0]):
+            node_features = data_x[i]
+            original_index = data_y[i].item()
+            hash_of_index = index_to_hash[original_index]
+            original_set_of_notes = hash_to_notes[hash_of_index]
+            original_set_tensor = torch.tensor(list(original_set_of_notes))
+            original_set_zero = torch.zeros((data_x.shape[0],))
+            original_set_tensor = torch.cat((original_set_tensor, original_set_zero), dim=0)[
+                                  :data_x.shape[0]].unsqueeze(0)
+            node_features = node_features.unsqueeze(0)
+
+            sorted_node_features, _ = torch.sort(node_features)
+            sorted_original_set_tensor, _ = torch.sort(original_set_tensor)
+            if not torch.equal(sorted_node_features, sorted_original_set_tensor):
+                print(f"Error for index {i}, hash {hash_of_index}, notes {original_set_of_notes}:")
+                print(node_features, original_set_tensor)
+
     def process(self):
         """We compute the mask for each graph separately,
         since  graphs have different sizes or structures.
@@ -427,7 +528,6 @@ class MidiDataset(InMemoryDataset):
         allowing your model to learn and validate on a variety of examples.
         :return:
         """
-
         if self.processed_file_exists():
             print(f"Processed files found in {self.processed_dir}. Loading...")
             self.load_processed()
@@ -450,10 +550,16 @@ class MidiDataset(InMemoryDataset):
         _data, _slices = self.collate(self.__data_list)
         _dataset_length = len(self.__data_list)
         print(f"Saving {self.processed_dir} per_instrument_data.pt")
-        torch.save((_data, _slices, additional_data), osp.join(self.processed_dir, f'per_instrument_data.pt'))
+        torch.save((_data, _slices, additional_data),
+                   osp.join(self.processed_dir,
+                            f'per_instrument_'
+                            f'vel_{self.include_velocity}_'
+                            f'feature_size_{self.feature_vec_size}_'
+                            f'tolerance_{str(self.tolerance)}.pt')
+                   )
         del self.__data_list
         self.__data_list = None
-        self._graph_builder = None
+        # self._graph_builder = None
 
         self._mask_entire_graph()
         _hash_to_notes = self.graph_builder.hash_to_notes
@@ -468,7 +574,14 @@ class MidiDataset(InMemoryDataset):
         }
 
         print(f"Saving {self.processed_dir} data.pt")
-        torch.save((_data, _slices, additional_data), osp.join(self.processed_dir, f'data.pt'))
+        torch.save((_data, _slices, additional_data),
+                   osp.join(
+                       self.processed_dir,
+                       f'data_'
+                       f'vel_{self.include_velocity}_'
+                       f'feature_size_{self.feature_vec_size}_'
+                       f'tolerance_{str(self.tolerance)}.pt'
+                   ))
         del self.__data_list
         self.__data_list = None
         self._graph_builder = None
@@ -479,9 +592,6 @@ class MidiDataset(InMemoryDataset):
         """Process and mask all graphs
         :return:
         """
-        self._graph_builder = MidiGraphBuilder(
-            None, is_instrument_graph=True)
-
         if self.__data_list is None:
             self.__data_list = []
 
@@ -489,22 +599,25 @@ class MidiDataset(InMemoryDataset):
             print(f"Reading {raw_path}")
             try:
                 midi_seqs = MidiReader.read(raw_path)
-                self._graph_builder.build(midi_seqs)
+                self._graph_builder.build(
+                    midi_seqs,
+                    default_trim_time=self.default_trim_time,
+                    feature_vec_size=self.feature_vec_size,
+                    velocity_num_buckets=self.velocity_num_buckets,
+                    filter_single_notes=self.filter_single_notes,
+                    tolerance=self.tolerance,
+                    is_include_velocity=self.include_velocity,
+                    is_per_instrument=False
+                )
                 graphs = self._graph_builder.graphs()
                 if not graphs:
-                    raise ValueError("No subgraphs found in graph builder.")
+                    raise ValueError("No sub graphs found in graph builder.")
 
                 midi_data = next(graphs)
 
                 self.all_classes.update(torch.unique(midi_data.y).tolist())
                 if self.pre_filter is not None and not self.pre_filter(midi_data):
                     continue
-
-                # we mask entire graph
-                num_graphs = len(midi_data)
-                train_ratio, val_ratio = self.__train_ratio, self.__val_ratio
-                train_size = int(train_ratio * num_graphs)
-                val_size = int(val_ratio * num_graphs)
 
                 # split mask
                 num_nodes = midi_data.x.size(0)
@@ -525,20 +638,11 @@ class MidiDataset(InMemoryDataset):
 
                 if self.pre_transform is not None:
                     midi_data = self.pre_transform(midi_data)
+
                 self.__data_list.append(midi_data)
 
-                #
-                # for idx, data in enumerate(midi_data):
-                #     # training, validation, and testing masks
-                #     data.train_mask = torch.tensor([idx in indices[:train_size]])
-                #     data.val_mask = torch.tensor([idx in indices[train_size:train_size + val_size]])
-                #     data.test_mask = torch.tensor([idx in indices[train_size + val_size:]])
-                #     # apply pre transform for train, val and test.
-                #     if self.pre_transform is not None:
-                #         data = self.pre_transform(data)
-                #     self.__data_list.append(data)
-
             except KeyError as ker_err:
+                print(ker_err)
                 print(f"Error in file {raw_path} error: {ker_err}")
             except FileNotFoundError as file_not_found:
                 print(f"Error in file {raw_path} error: {file_not_found}")
@@ -561,9 +665,9 @@ class MidiDataset(InMemoryDataset):
         :return:
         """
         if self.__is_instrument_graph:
-            file_name = f'per_instrument_data.pt'
+            file_name = self.processed_file_names[0]
         else:
-            file_name = f'data.pt'
+            file_name = self.processed_file_names[1]
 
         self.data, self.slices, _ = torch.load(osp.join(self.processed_dir, file_name))
         return self.data
