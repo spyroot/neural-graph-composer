@@ -5,6 +5,7 @@ Graph Neural Ntwork layer
 
 """
 import argparse
+import glob
 import os
 from enum import Enum
 from typing import Optional
@@ -197,6 +198,8 @@ class ExampleNodeClassification(Experiments):
         assert self._batch_size is not None, "Batch size is not set."
 
         self.datasize = 0
+        self.start_epoch = 0
+        self.save_freq = 2
         self.test_size = 0
         self._num_workers = 0
         self._is_gin = False
@@ -222,6 +225,7 @@ class ExampleNodeClassification(Experiments):
         self.test_loader = DataLoader(
             midi_dataset, batch_size=batch_size, shuffle=False)
 
+        self.model_type = model_type
         if model_type == "GCN3":
             print(f"Creating GCN3 feature dim: {self._feature_dim} "
                   f"hidden size {self._hidden_dim} num classes "
@@ -326,34 +330,48 @@ class ExampleNodeClassification(Experiments):
                      train_precision, train_recall,
                      val_acc, val_f1, val_precision, val_recall,
                      test_acc, test_f1, test_precision, test_recall,
-                     num_epochs, output_dir="metric", run=None):
+                     num_epochs, output_dir="metric",  model_type=""):
         """
         :return:
         """
+        if not (train_loss and train_f1 and train_acc and train_precision and train_recall
+                and val_acc and val_f1 and val_precision and val_recall
+                and test_acc and test_f1 and test_precision and test_recall):
+            print("Not enough metrics to plot")
+            return
+
         epochs = range(1, num_epochs + 1)
         plt.figure(figsize=(15, 10))
+
         plt.plot(epochs, train_loss, label="train_loss")
         plt.plot(epochs, train_f1, label="train_f1")
         plt.plot(epochs, train_acc, label="train_acc")
         plt.plot(epochs, train_precision, label="train_precision")
         plt.plot(epochs, train_recall, label="train_recall")
-        plt.plot(epochs, val_acc, label="val_acc")
-        plt.plot(epochs, val_f1, label="val_f1")
-        plt.plot(epochs, val_precision, label="val_precision")
-        plt.plot(epochs, val_recall, label="val_recall")
-        plt.plot(epochs, test_acc, label="test_acc")
-        plt.plot(epochs, test_f1, label="test_f1")
-        plt.plot(epochs, test_precision, label="test_precision")
-        plt.plot(epochs, test_recall, label="test_recall")
+
+        if val_acc and val_f1 and val_precision and val_recall:
+            val_epochs = range(1, len(val_acc) + 1)
+            plt.plot(val_epochs, val_acc, label="val_acc")
+            plt.plot(val_epochs, val_f1, label="val_f1")
+            plt.plot(val_epochs, val_precision, label="val_precision")
+            plt.plot(val_epochs, val_recall, label="val_recall")
+
+        if test_acc and test_f1 and test_precision and test_recall:
+            test_epochs = range(1, len(test_acc) + 1)
+            plt.plot(test_epochs, test_acc, label="test_acc")
+            plt.plot(test_epochs, test_f1, label="test_f1")
+            plt.plot(test_epochs, test_precision, label="test_precision")
+            plt.plot(test_epochs, test_recall, label="test_recall")
+
         plt.xlabel("Epoch")
         plt.ylabel("Metric")
-        plt.title("Training Metrics")
+        plt.title(f"{model_type} Training Metrics")
         plt.legend()
 
         if output_dir:
             if not os.path.exists(output_dir):
                 os.makedirs(output_dir)
-            filename = os.path.join(output_dir, "metrics.png")
+            filename = os.path.join(output_dir, f"{model_type}_metrics.png")
             plt.savefig(filename)
 
         plt.show()
@@ -362,6 +380,8 @@ class ExampleNodeClassification(Experiments):
         """
         :return:
         """
+        self.load_checkpoint(self.model_type)
+
         best_val_acc = 0.
         best_epoch = 0.
         best_test_acc = 0.
@@ -439,11 +459,16 @@ class ExampleNodeClassification(Experiments):
                     f"Test Precision: {test_precision:.5f}, "
                     f"Test Recall: {test_recall:.5f}")
 
+            if e % self.save_freq == 0:
+                self.save_checkpoint(e, self.optimizer.state_dict(), model_name=self.model_type)
+
         print(f"Best Epoch: {best_epoch}, Test Acc: {best_test_acc:.5f}")
         self.plot_metrics(
             train_losses, train_f1s, train_accs, train_precisions,
             train_recalls, val_accs, val_f1s, val_precisions, val_recalls,
-            test_accs, test_f1s, test_precisions, test_recalls, self._epochs)
+            test_accs, test_f1s, test_precisions, test_recalls,
+            self._epochs,
+            model_type=self.model_type)
 
     @torch.no_grad()
     def evaluate(self, is_eval: bool):
@@ -480,6 +505,7 @@ class ExampleNodeClassification(Experiments):
 
             data = batch.to(self.device)
             out = self.model(data)
+            print("num graph", b.num_graphs)
 
             if self._is_gin:
                 node_idx = torch.arange(out.shape[0]).to(self.device)
@@ -493,7 +519,6 @@ class ExampleNodeClassification(Experiments):
                 pred_masked = out_sum[mask, -self._num_classes:]
             else:
                 pred_masked = out[mask]
-
             # correct2 = int((out.argmax(dim=-1) == data.y).sum())
             # print(out.argmax(dim=-1))
             # print(f"correct unmasked {correct2}")
@@ -528,6 +553,70 @@ class ExampleNodeClassification(Experiments):
         f1 = 2 * (precision * recall) / (precision + recall + 1e-9)
 
         return accuracy, f1, precision, recall
+
+    def save_model(self, filename, output_dir='checkpoints'):
+        """
+        :param filename:
+        :param output_dir:
+        :return:
+        """
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+        filename = os.path.join(output_dir, filename)
+        torch.save(self.model.state_dict(), filename)
+
+    def save_checkpoint(self, epoch, optimizer_state, output_dir='checkpoints', model_name='model'):
+        """save checkpoint each model gets on dir.
+        :param model_name:
+        :param epoch:
+        :param optimizer_state:
+        :param output_dir:
+        :return:
+        """
+        checkpoint_dir = os.path.join(output_dir, model_name)
+        if not os.path.exists(checkpoint_dir):
+            os.makedirs(checkpoint_dir)
+        checkpoint_path = os.path.join(checkpoint_dir, f"checkpoint_{epoch}.pt")
+
+        torch.save({
+            'epoch': epoch,
+            'model_state_dict': self.model.state_dict(),
+            'optimizer_state_dict': optimizer_state
+        }, checkpoint_path)
+
+    def load_checkpoint(self, model_type: str, checkpoint_dir: str = 'checkpoints'):
+        """Loads the last saved checkpoint from a given directory.
+        :param model_type:
+        :param checkpoint_dir: Path to the checkpoint dir
+        """
+        if not os.path.exists(checkpoint_dir):
+            os.makedirs(checkpoint_dir)
+
+        checkpoint_dir = os.path.join(checkpoint_dir, model_type)
+        if not os.path.exists(checkpoint_dir):
+            print(f"Checkpoint directory {checkpoint_dir} does not exist.")
+            return
+
+        checkpoint_files = glob.glob(os.path.join(checkpoint_dir, "*.pt"))
+        if not checkpoint_files:
+            print("No checkpoints found.")
+            return
+
+        checkpoint_files.sort(key=os.path.getmtime)
+        checkpoint_path = checkpoint_files[-1]
+        checkpoint = torch.load(checkpoint_path)
+        self.model.load_state_dict(checkpoint['model_state_dict'])
+        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        self.start_epoch = checkpoint['epoch'] + 1
+        print(f"Loaded checkpoint from {checkpoint_path}.")
+
+    def load_model(self, model_path):
+        """Load the saved model from the specified path
+        :param model_path:
+        :return:
+        """
+        self.model.load_state_dict(torch.load(model_path))
+        self.model.eval()
 
 
 if __name__ == '__main__':
@@ -570,7 +659,7 @@ if __name__ == '__main__':
                      per_instrument_graph=args.graph_per_instrument,
                      tolerance=0.5)
 
-    example = ExampleNodeClassification(
+    example_model = ExampleNodeClassification(
         epochs=args.epochs,
         batch_size=args.batch_size,
         midi_dataset=ds,
@@ -578,5 +667,5 @@ if __name__ == '__main__':
         model_type=args.model_type,
         lr=args.lr,
         activation=Activation.PReLU)
+    example_model.train()
 
-    example.train()
