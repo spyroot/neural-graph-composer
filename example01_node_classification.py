@@ -502,7 +502,7 @@ class ExampleNodeClassification(Experiments):
                 f"Train Recall: {train_recall:.5f}")
 
             self.scheduler.step()
-            self.update_metrics(loss_avg, train_f1, train_acc, train_recall, train_precisio)
+            self.update_metrics(loss_avg, train_f1, train_acc, train_recall, train_precision)
 
             if e % self.test_update_freq == 0:
                 test_acc, test_f1, test_precision, test_recall = self.evaluate(
