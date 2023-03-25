@@ -6,28 +6,56 @@ Graph Neural Ntwork layer
 """
 import argparse
 import os
+from enum import Enum
 from typing import Optional
 
 import numpy as np
 import torch
+from torch import nn
 import torch.nn.functional as F
 import torch_geometric
 import torch_geometric.transforms as T
-from matplotlib import pyplot as plt
-from sklearn.metrics import accuracy_score
-from sklearn.metrics import f1_score
-from torch import nn
 from torch_geometric.loader import DataLoader
 from torch_geometric.nn import GCNConv, GINConv, GATConv
+import wandb
+
+from matplotlib import pyplot as plt
+from sklearn.metrics import f1_score
 from example_shared import Experiments
 from neural_graph_composer.midi_dataset import MidiDataset
 
 
+class Activation(Enum):
+    ReLU = 'relu'
+    PReLU = 'prelu'
+    ELU = 'elu'
+    SELU = 'selu'
+    Tanh = 'tanh'
+
+
 class GCN2(torch.nn.Module):
-    def __init__(self, num_feature, hidden_channels, num_classes):
+    def __init__(
+            self, num_feature,
+            hidden_channels,
+            num_classes,
+            activation: Optional[Activation] = Activation.ReLU,
+            dropout_p=0.5):
         super(GCN2, self).__init__()
+
+        if activation == Activation.ReLU:
+            self.activation = nn.ReLU()
+        elif activation == Activation.PReLU:
+            self.activation = nn.PReLU(hidden_channels)
+        elif activation == Activation.ELU:
+            self.activation = nn.ELU(alpha=1.0)
+        elif activation == Activation.SELU:
+            self.activation = nn.SELU()
+        elif activation == Activation.Tanh:
+            self.activation = nn.Tanh()
+
         self.conv1 = GCNConv(num_feature, hidden_channels)
         self.conv2 = GCNConv(hidden_channels, num_classes)
+        self.dropout_p = dropout_p
 
     def forward(self, data):
         """
@@ -36,39 +64,47 @@ class GCN2(torch.nn.Module):
         """
         x, edge_index = data.x, data.edge_index
         x = self.conv1(x, edge_index)
-        x = F.relu(x)
-        x = F.dropout(x, p=0.5, training=self.training)
+        x = self.activation(x)
+        x = F.dropout(x, p=self.dropout_p, training=self.training)
         x = self.conv2(x, edge_index)
         return F.log_softmax(x, dim=1)
 
 
 class GCN3(torch.nn.Module):
-    def __init__(self, num_feature,
-                 hidden_channels,
-                 num_classes,
-                 is_relu: Optional[bool] = True):
+    def __init__(
+            self, num_feature: int,
+            hidden_channels: int,
+            num_classes: int,
+            activation: Optional[Activation] = Activation.ReLU,
+            dropout_p: float = 0.5):
         super(GCN3, self).__init__()
+
+        if activation == Activation.ReLU:
+            self.activation = nn.ReLU()
+        elif activation == Activation.PReLU:
+            self.activation = nn.PReLU(hidden_channels)
+        elif activation == Activation.ELU:
+            self.activation = nn.ELU(alpha=1.0)
+        elif activation == Activation.SELU:
+            self.activation = nn.SELU()
+        elif activation == Activation.Tanh:
+            self.activation = nn.Tanh()
+
         self.conv1 = GCNConv(num_feature, hidden_channels)
         self.prelu01 = nn.PReLU(hidden_channels)
         self.conv2 = GCNConv(hidden_channels, hidden_channels)
         self.prelu02 = nn.PReLU(hidden_channels)
         self.conv3 = GCNConv(hidden_channels, num_classes)
-        self.is_relu = is_relu
+        self.dropout_p = dropout_p
 
     def forward(self, data):
         x, edge_index = data.x, data.edge_index
         x = self.conv1(x, edge_index)
-        if self.is_relu:
-            x = F.relu(x)
-        else:
-            self.prelu01(x)
-        x = F.dropout(x, p=0.5, training=self.training)
+        x = self.activation(x)
+        x = F.dropout(x, p=self.dropout_p, training=self.training)
         x = self.conv2(x, edge_index)
-        if self.is_relu:
-            x = F.relu(x)
-        else:
-            self.prelu02(x)
-        x = F.dropout(x, p=0.5, training=self.training)
+        x = self.activation(x)
+        x = F.dropout(x, p=self.dropout_p, training=self.training)
         x = self.conv3(x, edge_index)
         return F.log_softmax(x, dim=1)
 
@@ -103,6 +139,7 @@ class GIN(torch.nn.Module):
 class GAT(torch.nn.Module):
     """
     """
+
     def __init__(self, num_feature, hidden_channels, num_classes,
                  use_edge_weights=True, dropout=0.3):
         super(GAT, self).__init__()
@@ -139,13 +176,17 @@ class ExampleNodeClassification(Experiments):
             midi_dataset: MidiDataset, hidden_dim: int,
             model_type: Optional[str] = "GCN3",
             lr: Optional[float] = 0.01,
-            is_relu: Optional[bool] = True):
+            activation: Optional[Activation] = Activation.ReLU,
+            train_update_rate: Optional[int] = 1,
+            test_update_freq: Optional[int] = 10,
+            eval_update_freq: Optional[int] = 20):
         """Example experiment for training a graph neural network on MIDI data.
-        :param epochs:
-        :param batch_size:
-        :param hidden_dim:
-        :param model_type:
-        :param lr:
+
+        :param epochs: num epochs
+        :param batch_size: default batch (for colab on GPU use 4)
+        :param hidden_dim: hidden for all models.
+        :param model_type:  (GCN3/GAT)
+         :param lr: learning rate.
         """
         super().__init__(epochs, batch_size, midi_dataset)
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -165,6 +206,9 @@ class ExampleNodeClassification(Experiments):
         self._feature_dim = midi_dataset.num_node_features
         self._num_classes = midi_dataset.total_num_classes
         self._lr = lr
+        self.train_update_rate = train_update_rate
+        self.test_update_freq = test_update_freq
+        self.eval_update_freq = eval_update_freq
 
         self.train_dataset = midi_dataset
         self.test_dataset = midi_dataset
@@ -181,15 +225,18 @@ class ExampleNodeClassification(Experiments):
         if model_type == "GCN3":
             print(f"Creating GCN3 feature dim: {self._feature_dim} "
                   f"hidden size {self._hidden_dim} num classes "
-                  f"{self._num_classes} batch size {self._batch_size} lr {self._lr} is_rule {is_relu}")
+                  f"{self._num_classes} batch size {self._batch_size} "
+                  f"lr {self._lr} activate {activation.value}")
             self.model = GCN3(
-                self._feature_dim, self._hidden_dim, self._num_classes, is_relu=is_relu)
+                self._feature_dim, self._hidden_dim,
+                self._num_classes, activation=activation).to(self.device)
         elif model_type == "GAT":
             print(f"Creating GAT feature dim: {self._feature_dim} "
                   f"hidden size {self._hidden_dim} num classes "
-                  f"{self._num_classes} batch size {self._batch_size} lr {self._lr}")
+                  f"{self._num_classes} batch size {self._batch_size} lr {self._lr}").to(self.device)
             self.model = GAT(
-                self._feature_dim, self._hidden_dim, self._num_classes)
+                self._feature_dim, self._hidden_dim, self._num_classes
+            ).to(self.device)
             self._is_gat = True
         else:
             self.model = GIN(
@@ -215,10 +262,10 @@ class ExampleNodeClassification(Experiments):
 
         pred_train_all = []
         y_train_all = []
+        total_graph = 0
 
         for i, b in enumerate(self.train_loader):
             train_batch = b
-
             # if isinstance(b, list):
             #     train_batch, _, _ = b
             # else:
@@ -250,8 +297,9 @@ class ExampleNodeClassification(Experiments):
 
             loss_all += train_batch.num_graphs * loss.item()
             epoch_loss += loss.item()
+            total_graph += train_batch.num_graphs
 
-            # Calculate F1 and accuracy metrics
+            # calculate F1 and accuracy metrics
             pred_train = out_train.argmax(dim=1).cpu().numpy()
             y_train_np = y_train.cpu().numpy()
             pred_train_all.append(pred_train)
@@ -262,16 +310,15 @@ class ExampleNodeClassification(Experiments):
             fp += torch.sum((pred_class_idx == 1) & (y_train == 0)).item()
             fn += torch.sum((pred_class_idx == 0) & (y_train == 1)).item()
 
-        # Calculate F1 and accuracy metrics
+        # calculate F1 and accuracy metrics
         pred_train_all = np.concatenate(pred_train_all, axis=0)
         y_train_all = np.concatenate(y_train_all, axis=0)
-
         precision = tp / (tp + fp + 1e-9)
         recall = tp / (tp + fn + 1e-9)
         train_f1 = f1_score(y_train_all, pred_train_all, average='macro')
         train_acc = (pred_train_all == y_train_all).sum() / len(y_train_all)
 
-        loss_avg = loss_all / len(self.train_loader.dataset)
+        loss_avg = loss_all / total_graph
         return loss_avg, train_f1, train_acc, recall, precision
 
     @staticmethod
@@ -336,11 +383,14 @@ class ExampleNodeClassification(Experiments):
         test_recalls = []
 
         for e in range(1, self._epochs + 1):
-
             loss_avg, train_f1, train_acc, train_recall, train_precision = self.train_epoch()
-            # train_acc, train_f1, train_precision, train_recall = self.evaluate(self.train_loader)
-            # val_acc, val_f1, val_precision, val_recall = self.evaluate(self.val_loader)
-            # test_acc, test_f1, test_precision, test_recall = self.evaluate(self.test_loader)
+            print(
+                f"Epoch: {e}, "
+                f"Loss: {loss_avg:.5f}, "
+                f"Train Acc: {train_acc:.5f}, "
+                f"Train F1: {train_f1:.5f}, "
+                f"Train Precision: {train_precision:.5f}, "
+                f"Train Recall: {train_recall:.5f}")
 
             train_losses.append(loss_avg)
             train_f1s.append(train_f1)
@@ -348,33 +398,35 @@ class ExampleNodeClassification(Experiments):
             train_recalls.append(train_recall)
             train_precisions.append(train_precision)
 
-            # val_accs.append(val_acc)
-            # val_f1s.append(val_f1)
-            # val_precisions.append(val_precision)
-            # val_recalls.append(val_recall)
-            #
-            # test_accs.append(test_acc)
-            # test_f1s.append(test_f1)
-            # test_precisions.append(test_precision)
-            # test_recalls.append(test_recall)
+            if e % self.test_update_freq == 0:
+                test_acc, test_f1, test_precision, test_recall = self.evaluate(
+                    is_eval=False)
 
-            # if val_acc > best_val_acc:
-            #     best_val_acc = val_acc
-            #     best_epoch = e
-            #     best_test_acc = test_acc
-
-            if e % 1 == 0:
                 print(
                     f"Epoch: {e}, "
-                    f"Loss: {loss_avg:.5f}, "
-                    f"Train Acc: {train_acc:.5f}, "
-                    f"Train F1: {train_f1:.5f}, "
-                    f"Train Precision: {train_precision:.5f}, "
-                    f"Train Recall: {train_recall:.5f}")
+                    f"Test Acc: {test_acc:.5f}, "
+                    f"Test F1: {test_f1:.5f}, "
+                    f"Test Precision: {test_precision:.5f}, "
+                    f"Test Recall: {test_recall:.5f}")
 
-            if e % 10 == 0:
-                val_acc, val_f1, val_precision, val_recall = self.evaluate("val")
-                test_acc, test_f1, test_precision, test_recall = self.evaluate("test")
+                test_accs.append(test_acc)
+                test_f1s.append(test_f1)
+                test_precisions.append(test_precision)
+                test_recalls.append(test_recall)
+
+            if e % self.eval_update_freq == 0:
+                val_acc, val_f1, val_precision, val_recall = self.evaluate(is_eval=False)
+                test_acc, test_f1, test_precision, test_recall = self.evaluate(is_eval=True)
+
+                val_accs.append(val_acc)
+                val_f1s.append(val_f1)
+                val_precisions.append(val_precision)
+                val_recalls.append(val_recall)
+
+                if val_acc > best_val_acc:
+                    best_val_acc = val_acc
+                    best_epoch = e
+                    best_test_acc = test_acc
 
                 print(
                     f"Epoch: {e}, "
@@ -387,27 +439,22 @@ class ExampleNodeClassification(Experiments):
                     f"Test Precision: {test_precision:.5f}, "
                     f"Test Recall: {test_recall:.5f}")
 
-            # if val_acc > best_val_acc:
-            #     best_val_acc = val_acc
-            #     best_epoch = e
-            #     best_test_acc = test_acc
-
         print(f"Best Epoch: {best_epoch}, Test Acc: {best_test_acc:.5f}")
         self.plot_metrics(
             train_losses, train_f1s, train_accs, train_precisions,
             train_recalls, val_accs, val_f1s, val_precisions, val_recalls,
             test_accs, test_f1s, test_precisions, test_recalls, self._epochs)
 
-    def evaluate(self, eval_type: str):
+    @torch.no_grad()
+    def evaluate(self, is_eval: bool):
         """
         :return:
         """
-        if eval_type == "val":
+        self.model.eval()
+        if is_eval:
             data_loader = self.val_loader
         else:
             data_loader = self.test_loader
-
-        self.model.eval()
 
         total = 0
         correct = 0
@@ -417,7 +464,7 @@ class ExampleNodeClassification(Experiments):
 
         for b in data_loader:
             if isinstance(b, list):
-                if eval_type == "val":
+                if is_eval:
                     _, val, _ = b
                     batch = val
                 else:
@@ -426,41 +473,53 @@ class ExampleNodeClassification(Experiments):
             else:
                 batch = b
 
-            test_mask = batch.test_mask
+            mask = batch.test_mask
+
+            if is_eval:
+                mask = batch.val_mask
+
             data = batch.to(self.device)
             out = self.model(data)
-
-            correct2 = int((out.argmax(dim=-1) == data.y).sum())
-            print(out.argmax(dim=-1))
-            print(data.y)
-            print(f"correct {correct2}")
 
             if self._is_gin:
                 node_idx = torch.arange(out.shape[0]).to(self.device)
                 out_sum = torch.zeros((batch.num_nodes, out.shape[1]), dtype=torch.float).to(self.device)
                 out_sum.scatter_(0, node_idx.unsqueeze(1).expand(-1, out.shape[1]), out)
-                pred_masked = out_sum[test_mask]
+                pred_masked = out_sum[mask]
             elif self._is_gat:
                 node_idx = torch.arange(out.shape[0]).to(self.device)
                 out_sum = torch.zeros((batch.num_nodes, out.shape[1]), dtype=torch.float).to(self.device)
                 out_sum.scatter_(0, node_idx.unsqueeze(1).expand(-1, out.shape[1]), out)
-                pred_masked = out_sum[test_mask, -self._num_classes:]
+                pred_masked = out_sum[mask, -self._num_classes:]
             else:
-                pred_masked = out[test_mask]
+                pred_masked = out[mask]
 
-            y_masked = batch.y[test_mask]
+            # correct2 = int((out.argmax(dim=-1) == data.y).sum())
+            # print(out.argmax(dim=-1))
+            # print(f"correct unmasked {correct2}")
+
+            y_masked = batch.y[mask]
             pred_class_idx = torch.argmax(pred_masked, dim=1)
-            correct += torch.sum(torch.eq(pred_class_idx, y_masked)).item()
+            batch_correct = torch.sum(torch.eq(pred_class_idx, y_masked)).item()
+            correct += batch_correct
 
-            _y_masked = batch.y[test_mask].cpu().numpy()
-            _pred_class_idx = torch.argmax(pred_masked, dim=1).cpu().numpy()
-            _accuracy = accuracy_score(_y_masked, _pred_class_idx)
+            # print(f"correct  {batch_correct} "
+            #       f"{y_masked.shape[0]} {pred_class_idx.shape }"
+            #       f"mask shape batch correct {batch_correct / y_masked.shape[0]}")
 
+            # print(f"correct masked argmax {correct} "
+            #       f"{y_masked.shape} mask shape "
+            #       f"{pred_class_idx.shape}")
+
+            # _y_masked = batch.y[mask].cpu().numpy()
+            # _pred_class_idx = torch.argmax(pred_masked, dim=1).cpu().numpy()
+            # _accuracy = accuracy_score(_y_masked, _pred_class_idx)
+            # print(_accuracy)
             # calculate tp, fp, fn for F1 score, precision, and recall
+
             tp += torch.sum((pred_class_idx == 1) & (y_masked == 1)).item()
             fp += torch.sum((pred_class_idx == 1) & (y_masked == 0)).item()
             fn += torch.sum((pred_class_idx == 0) & (y_masked == 1)).item()
-
             total += y_masked.shape[0]
 
         accuracy = correct / total
@@ -476,8 +535,8 @@ if __name__ == '__main__':
     """
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     parser = argparse.ArgumentParser()
-    parser.add_argument('--batch_size', type=int, default=32)
-    parser.add_argument('--epochs', type=int, default=100)
+    parser.add_argument('--batch_size', type=int, default=2)
+    parser.add_argument('--epochs', type=int, default=10)
     parser.add_argument('--model_type', type=str, default='GCN3', choices=['GCN3', 'GIN', 'GAT'])
     parser.add_argument('--hidden_dim', type=int, default=32)
     parser.add_argument('--lr', type=float, default=0.01)
@@ -518,6 +577,6 @@ if __name__ == '__main__':
         hidden_dim=args.hidden_dim,
         model_type=args.model_type,
         lr=args.lr,
-        is_relu=True)
+        activation=Activation.PReLU)
 
     example.train()
