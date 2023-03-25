@@ -193,6 +193,7 @@ class ExampleNodeClassification(Experiments):
          :param lr: learning rate.
         """
         super().__init__(epochs, batch_size, midi_dataset)
+
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         assert self.device is not None, "Device is not set."
         assert self.datasize is not None, "Datasize is not set."
@@ -257,6 +258,22 @@ class ExampleNodeClassification(Experiments):
             self.model.parameters(), lr=self._lr, weight_decay=5e-4)
 
         self.scheduler = StepLR(self.optimizer, step_size=10, gamma=0.1)
+
+        self.val_precisions = []
+        self.val_f1s = []
+        self.val_accs = []
+        self.val_recalls = []
+        self.test_recalls = []
+        self.test_precisions = []
+        self.test_accs = []
+        self.test_f1s = []
+        self.train_precisions = []
+        self.train_recalls = []
+        self.train_f1s = []
+        self.train_accs = []
+        self.train_losses = []
+        self.metrics_dir = "metric"
+        self.save_metrics = True
 
     def train_epoch(self):
         """
@@ -330,42 +347,48 @@ class ExampleNodeClassification(Experiments):
         loss_avg = loss_all / total_graph
         return loss_avg, train_f1, train_acc, recall, precision
 
-    @staticmethod
-    def plot_metrics(train_loss, train_f1, train_acc,
-                     train_precision, train_recall,
-                     val_acc, val_f1, val_precision, val_recall,
-                     test_acc, test_f1, test_precision, test_recall,
-                     num_epochs, output_dir="metric", model_type=""):
-        """
+    def plot_metrics(self, num_epochs, output_dir="metric", model_type=""):
+        """Plot metrics
         :return:
         """
-        if not (train_loss and train_f1 and train_acc
-                and train_precision and train_recall):
+        if self.model_type and len(self.model_type) > 0:
+            model_type = self.model_type
+
+        if not (isinstance(self.train_losses, (list, np.ndarray))
+                and isinstance(self.train_f1s, (list, np.ndarray))
+                and isinstance(self.train_accs, (list, np.ndarray))
+                and isinstance(self.train_precisions, (list, np.ndarray))
+                and isinstance(self.train_recalls, (list, np.ndarray))):
+            print("accept list or nd.ndarray")
+            return
+
+        if not (self.train_losses and self.train_f1s and self.train_accs
+                and self.train_precisions and self.train_recalls):
             print("Not enough metrics to plot")
             return
 
         epochs = range(1, num_epochs + 1)
         plt.figure(figsize=(15, 10))
 
-        plt.plot(epochs, train_loss, label="train_loss")
-        plt.plot(epochs, train_f1, label="train_f1")
-        plt.plot(epochs, train_acc, label="train_acc")
-        plt.plot(epochs, train_precision, label="train_precision")
-        plt.plot(epochs, train_recall, label="train_recall")
+        plt.plot(epochs, self.train_losses, label="train_loss")
+        plt.plot(epochs, self.train_f1s, label="train_f1")
+        plt.plot(epochs, self.train_accs, label="train_acc")
+        plt.plot(epochs, self.train_precisions, label="train_precision")
+        plt.plot(epochs, self.train_recalls, label="train_recall")
 
-        if val_acc and val_f1 and val_precision and val_recall:
-            val_epochs = range(1, len(val_acc) + 1)
-            plt.plot(val_epochs, val_acc, label="val_acc")
-            plt.plot(val_epochs, val_f1, label="val_f1")
-            plt.plot(val_epochs, val_precision, label="val_precision")
-            plt.plot(val_epochs, val_recall, label="val_recall")
+        if self.val_accs and self.val_f1s and self.val_precisions and self.val_recalls:
+            val_epochs = range(1, len(self.val_accs) + 1)
+            plt.plot(val_epochs, self.val_accs, label="val_acc")
+            plt.plot(val_epochs, self.val_f1s, label="val_f1")
+            plt.plot(val_epochs, self.val_precisions, label="val_precision")
+            plt.plot(val_epochs, self.val_recalls, label="val_recall")
 
-        if test_acc and test_f1 and test_precision and test_recall:
-            test_epochs = range(1, len(test_acc) + 1)
-            plt.plot(test_epochs, test_acc, label="test_acc")
-            plt.plot(test_epochs, test_f1, label="test_f1")
-            plt.plot(test_epochs, test_precision, label="test_precision")
-            plt.plot(test_epochs, test_recall, label="test_recall")
+        if self.test_accs and self.test_f1s and self.test_precisions and self.test_recalls:
+            test_epochs = range(1, len(self.test_accs) + 1)
+            plt.plot(test_epochs, self.test_accs, label="test_acc")
+            plt.plot(test_epochs, self.test_f1s, label="test_f1")
+            plt.plot(test_epochs, self.test_precisions, label="test_precision")
+            plt.plot(test_epochs, self.test_recalls, label="test_recall")
 
         plt.xlabel("Epoch")
         plt.ylabel("Metric")
@@ -375,10 +398,88 @@ class ExampleNodeClassification(Experiments):
         if output_dir:
             if not os.path.exists(output_dir):
                 os.makedirs(output_dir)
+            print(f"Saving plot {model_type}_metrics.png")
             filename = os.path.join(output_dir, f"{model_type}_metrics.png")
             plt.savefig(filename)
 
         plt.show()
+
+    def update_metrics(self, loss_avg, train_f1, train_acc, train_recall, train_precision):
+        """Update the training metrics for each epoch.
+        :param loss_avg:
+        :param train_f1:
+        :param train_acc:
+        :param train_recall:
+        :param train_precision:
+        :return:
+        """
+        self.train_losses.append(loss_avg)
+        self.train_f1s.append(train_f1)
+        self.train_accs.append(train_acc)
+        self.train_recalls.append(train_recall)
+        self.train_precisions.append(train_precision)
+
+        if self.save_metrics:
+            if self.metrics_dir:
+                if not os.path.exists(self.metrics_dir):
+                    os.makedirs(self.metrics_dir)
+            metrics = {
+                'test_accs': self.val_accs,
+                'tet_f1s': self.val_f1s,
+                'test_precisions': self.val_precisions,
+                'test_recalls': self.val_recalls
+            }
+            filename = os.path.join(self.metrics_dir, f"{self.model_type}_train_metrics.pt")
+            torch.save(metrics, filename)
+
+    def update_test_metric(self, test_acc, test_f1, test_precision, test_recall):
+        """Update test metrics.
+        :param test_acc:
+        :param test_f1:
+        :param test_precision:
+        :param test_recall:
+        :return:
+        """
+        self.test_accs.append(test_acc)
+        self.test_f1s.append(test_f1)
+        self.test_precisions.append(test_precision)
+        self.test_recalls.append(test_recall)
+
+        if self.save_metrics:
+            metrics = {
+                'test_accs': self.val_accs,
+                'tet_f1s': self.val_f1s,
+                'test_precisions': self.val_precisions,
+                'test_recalls': self.val_recalls
+            }
+            if self.metrics_dir:
+                if not os.path.exists(self.metrics_dir):
+                    os.makedirs(self.metrics_dir)
+            filename = os.path.join(self.metrics_dir, f"{self.model_type}_test_metrics.pt")
+            torch.save(metrics, filename)
+
+    def update_val_metric(self, val_acc, val_f1, val_precision, val_recall):
+        """ Update validation metrics.
+        :param val_acc: validation accuracy.
+        :param val_f1: validation f1 score.
+        :param val_precision: validation precision.
+        :param val_recall: validation recall.
+        :return:
+        """
+        self.val_accs.append(val_acc)
+        self.val_f1s.append(val_f1)
+        self.val_precisions.append(val_precision)
+        self.val_recalls.append(val_recall)
+
+        if self.save_metrics:
+            metrics = {
+                'val_accs': self.val_accs,
+                'val_f1s': self.val_f1s,
+                'val_precisions': self.val_precisions,
+                'val_recalls': self.val_recalls
+            }
+            filename = os.path.join(self.metrics_dir, f"{self.model_type}_validation_metrics.pt")
+            torch.save(metrics, filename)
 
     def train(self):
         """
@@ -389,10 +490,6 @@ class ExampleNodeClassification(Experiments):
         best_val_acc = 0.
         best_epoch = 0.
         best_test_acc = 0.
-
-        train_losses, train_f1s, train_accs, train_recalls, train_precisions = [], [], [], [], []
-        val_accs, val_f1s, val_precisions, val_recalls = [], [], [], []
-        test_accs, test_f1s, test_precisions, test_precisions, test_recalls = [], [], [], []
 
         for e in range(1, self._epochs + 1):
             loss_avg, train_f1, train_acc, train_recall, train_precision = self.train_epoch()
@@ -405,12 +502,7 @@ class ExampleNodeClassification(Experiments):
                 f"Train Recall: {train_recall:.5f}")
 
             self.scheduler.step()
-
-            train_losses.append(loss_avg)
-            train_f1s.append(train_f1)
-            train_accs.append(train_acc)
-            train_recalls.append(train_recall)
-            train_precisions.append(train_precision)
+            self.update_metrics(loss_avg, train_f1, train_acc, train_recall, train_precisio)
 
             if e % self.test_update_freq == 0:
                 test_acc, test_f1, test_precision, test_recall = self.evaluate(
@@ -422,20 +514,13 @@ class ExampleNodeClassification(Experiments):
                     f"Test F1: {test_f1:.5f}, "
                     f"Test Precision: {test_precision:.5f}, "
                     f"Test Recall: {test_recall:.5f}")
-
-                test_accs.append(test_acc)
-                test_f1s.append(test_f1)
-                test_precisions.append(test_precision)
-                test_recalls.append(test_recall)
+                self.update_test_metric(test_acc, test_f1, test_precision, test_recall)
 
             if e % self.eval_update_freq == 0:
                 val_acc, val_f1, val_precision, val_recall = self.evaluate(is_eval=False)
                 test_acc, test_f1, test_precision, test_recall = self.evaluate(is_eval=True)
-
-                val_accs.append(val_acc)
-                val_f1s.append(val_f1)
-                val_precisions.append(val_precision)
-                val_recalls.append(val_recall)
+                self.update_test_metric(test_acc, test_f1, test_precision, test_recall)
+                self.update_val_metric(val_acc, val_f1, val_precision, val_recall)
 
                 if val_acc > best_val_acc:
                     best_val_acc = val_acc
@@ -457,12 +542,7 @@ class ExampleNodeClassification(Experiments):
                 self.save_checkpoint(e, self.optimizer.state_dict(), model_name=self.model_type)
 
         print(f"Best Epoch: {best_epoch}, Test Acc: {best_test_acc:.5f}")
-        self.plot_metrics(
-            train_losses, train_f1s, train_accs, train_precisions,
-            train_recalls, val_accs, val_f1s, val_precisions, val_recalls,
-            test_accs, test_f1s, test_precisions, test_recalls,
-            self._epochs,
-            model_type=self.model_type)
+        self.plot_metrics(self._epochs)
 
     @torch.no_grad()
     def evaluate(self, is_eval: bool):
@@ -477,9 +557,7 @@ class ExampleNodeClassification(Experiments):
 
         total = 0
         correct = 0
-        tp = 0
-        fp = 0
-        fn = 0
+        tp, fp, fn = 0., 0., 0.
 
         for b in data_loader:
             if isinstance(b, list):
