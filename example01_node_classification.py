@@ -1,8 +1,15 @@
 """
 Example Node classification based on 3 models.
+In this example we're trying to learn from a graph
+that represent.
+
+The default model set to GCN with 3
+layer and PRELU activation.
 
 Graph Neural Ntwork layer
 
+Author Mus spyroot@gmail.com
+           mbayramo@stanford.edu
 """
 import argparse
 import glob
@@ -28,6 +35,8 @@ from neural_graph_composer.midi_dataset import MidiDataset
 
 
 class Activation(Enum):
+    """Activation enum so we can experiment.
+    """
     ReLU = 'relu'
     PReLU = 'prelu'
     ELU = 'elu'
@@ -369,7 +378,7 @@ class ExampleNodeClassification(Experiments):
             print("Not enough metrics to plot")
             return
 
-        epochs = range(1, num_epochs + 1)
+        epochs = range(1, len(self.train_losses) + 1)
         plt.figure(figsize=(15, 10))
 
         plt.plot(epochs, self.train_losses, label="train_loss")
@@ -379,14 +388,18 @@ class ExampleNodeClassification(Experiments):
         plt.plot(epochs, self.train_recalls, label="train_recall")
 
         if self.val_accs and self.val_f1s and self.val_precisions and self.val_recalls:
-            val_epochs = range(1, len(self.val_accs) + 1)
+            val_epochs = range(self.eval_update_freq,
+                               len(self.val_accs) * self.eval_update_freq + 1,
+                               self.eval_update_freq)
             plt.plot(val_epochs, self.val_accs, label="val_acc")
             plt.plot(val_epochs, self.val_f1s, label="val_f1")
             plt.plot(val_epochs, self.val_precisions, label="val_precision")
             plt.plot(val_epochs, self.val_recalls, label="val_recall")
 
         if self.test_accs and self.test_f1s and self.test_precisions and self.test_recalls:
-            test_epochs = range(1, len(self.test_accs) + 1)
+            test_epochs = range(self.test_update_freq,
+                                len(self.test_accs) * self.test_update_freq + 1,
+                                self.test_update_freq)
             plt.plot(test_epochs, self.test_accs, label="test_acc")
             plt.plot(test_epochs, self.test_f1s, label="test_f1")
             plt.plot(test_epochs, self.test_precisions, label="test_precision")
@@ -672,17 +685,41 @@ class ExampleNodeClassification(Experiments):
             return
 
         checkpoint_files = glob.glob(os.path.join(checkpoint_dir, "*.pt"))
+        metrics_files = sorted(glob.glob(os.path.join(self.metrics_dir, f"{model_type}*.pt")))
         if not checkpoint_files:
             print("No checkpoints found.")
             return
 
-        checkpoint_files.sort(key=os.path.getmtime)
+        checkpoint_files.sort(key=lambda x: int(os.path.splitext(os.path.basename(x))[0].split('_')[-1]))
         checkpoint_path = checkpoint_files[-1]
         checkpoint = torch.load(checkpoint_path)
         self.model.load_state_dict(checkpoint['model_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         self.start_epoch = checkpoint['epoch'] + 1
         self.current_epoch = checkpoint['epoch'] + 1
+
+        if self.save_metrics and f"{model_type}_train_metrics.pt" in metrics_files:
+            train_metrics = torch.load(os.path.join(self.metrics_dir, f"{model_type}_train_metrics.pt"))
+            print(f"Loaded test metric from {train_metrics}.")
+            self.train_losses = train_metrics["train_losses"]
+            self.train_accs = train_metrics["train_accs"]
+            self.train_f1s = train_metrics["train_f1s"]
+            self.train_precisions = train_metrics["train_precisions"]
+            self.train_recalls = train_metrics["train_recalls"]
+        if self.save_metrics and f"{model_type}_validation_metrics.pt" in metrics_files:
+            val_metrics = torch.load(os.path.join(self.metrics_dir, f"{model_type}_validation_metrics.pt"))
+            print(f"Loaded test metric from {val_metrics}.")
+            self.val_accs = val_metrics["val_accs"]
+            self.val_f1s = val_metrics["val_f1s"]
+            self.val_precisions = val_metrics["val_precisions"]
+            self.val_recalls = val_metrics["val_recalls"]
+        if self.save_metrics and f"{model_type}_test_metrics.pt" in metrics_files:
+            test_metrics = torch.load(os.path.join(self.metrics_dir, f"{model_type}_test_metrics.pt"))
+            print(f"Loaded test metric from {test_metrics}.")
+            self.test_accs = test_metrics["test_accs"]
+            self.test_f1s = test_metrics["test_f1s"]
+            self.test_precisions = test_metrics["test_precisions"]
+            self.test_recalls = test_metrics["test_recalls"]
 
         print(f"Loaded checkpoint from {checkpoint_path}.")
 
