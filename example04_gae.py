@@ -38,17 +38,29 @@ that share a common structure or style.
 Author Mus spyroot@gmail.com
 """
 import argparse
+import glob
+import os
 from typing import Optional, Tuple
 
+import numpy as np
 import torch
 import torch_geometric.transforms as T
 from matplotlib import pyplot as plt
 from sklearn.manifold import TSNE
+from torch.optim.lr_scheduler import StepLR
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
 from torch_geometric.nn import GAE, VGAE, GCNConv
 from neural_graph_composer.midi_dataset import MidiDataset
 from sklearn.cluster import KMeans
+from example_shared import Experiments, Activation
+
+try:
+    import google.colab
+
+    IN_COLAB = True
+except:
+    IN_COLAB = False
 
 
 class RandomNodeDrop(T.BaseTransform):
@@ -208,206 +220,315 @@ class VariationalLinearEncoder(torch.nn.Module):
         return self.conv_mu(x, edge_index), self.conv_logstd(x, edge_index)
 
 
-def train(train_data, model, optimizer, args):
-    """
-    :param train_data:
-    :param model:
-    :param optimizer:
-    :param args:
-    :return:
-    """
-    model.train()
-    optimizer.zero_grad()
-    z = model.encode(train_data.x, train_data.edge_index)
-    # z = model.encode(train_data.x, train_data.edge_index.long())
-    loss = model.recon_loss(z, train_data.pos_edge_label_index)
-    if args.variational:
-        loss = loss + (1 / train_data.num_nodes) * model.kl_loss()
-    loss.backward()
-    optimizer.step()
-    return float(loss)
+class VariationGae(Experiments):
+    def __init__(
+            self, epochs: int,
+            batch_size: int,
+            midi_dataset: MidiDataset, hidden_dim: int,
+            model_type: Optional[str] = "",
+            lr: Optional[float] = 0.01,
+            activation: Optional[Activation] = Activation.ReLU,
+            train_update_rate: Optional[int] = 1,
+            test_update_freq: Optional[int] = 10,
+            eval_update_freq: Optional[int] = 20,
+            save_freq: Optional[int] = 20):
+        """Example experiment for training a graph neural network on MIDI data.
 
+        :param epochs: num epochs
+        :param batch_size: default batch (for colab on GPU use 4)
+        :param hidden_dim: hidden for all models.
+        :param model_type:
+         :param lr: learning rate.
+        """
+        super().__init__(
+            epochs, batch_size, midi_dataset, train_update_rate=train_update_rate,
+            test_update_freq=test_update_freq,
+            eval_update_freq=eval_update_freq,
+            save_freq=save_freq
+        )
 
-@torch.no_grad()
-def test(data, model):
-    """
-    :param data:
-    :param model:
-    :return:
-    """
-    model.eval()
-    z = model.encode(data.x, data.edge_index)
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        assert self.device is not None, "Device is not set."
+        assert self.datasize is not None, "Datasize is not set."
+        assert self.test_size is not None, "Test size is not set."
+        assert self._num_workers is not None, "Number of workers is not set."
+        assert self._batch_size is not None, "Batch size is not set."
 
-    pos_indices = data.pos_edge_label_index.t()
-    neg_indices = data.neg_edge_label_index.t()
+        self.datasize = 0
+        self.start_epoch = 0
+        self.save_freq = save_freq
 
-    all_indices = torch.cat([pos_indices, neg_indices], dim=0)
-    y_true = torch.zeros((len(all_indices),), dtype=torch.long)
-    y_true[:pos_indices.size(0)] = 1
+        self.test_size = 0
+        self._num_workers = 0
+        self._batch_size = batch_size
+        self._hidden_dim = hidden_dim
+        self._feature_dim = midi_dataset.num_node_features
+        self._num_classes = midi_dataset.total_num_classes
+        self._lr = lr
 
-    all_indices = all_indices.to(torch.long)
-    edge_index = torch.stack([all_indices[:, 0], all_indices[:, 1]], dim=0)
+        self.train_dataset = midi_dataset
+        self.test_dataset = midi_dataset
 
-    #
-    y_pred = model.decoder(z, edge_index)
-    y_pred = (y_pred > 0.5).type(torch.long)
-    acc = (y_pred == y_true).sum().item() / y_true.size(0)
-    return model.test(z, data.pos_edge_label_index, data.neg_edge_label_index), acc
+        self.train_loader = DataLoader(
+            midi_dataset, batch_size=self._batch_size, shuffle=True)
 
+        self.val_loader = DataLoader(
+            midi_dataset, batch_size=batch_size, shuffle=False)
 
-def predict_link(model, x, edge_index, node_a, node_b):
-    """
-    :param model:
-    :param x:
-    :param edge_index:
-    :param node_a:
-    :param node_b:
-    :return:
-    """
-    model.eval()
-    z = model.encode(x, edge_index)
-    similarity = torch.sigmoid(torch.dot(z[node_a], z[node_b]))
-    return similarity.item()
+        self.test_loader = DataLoader(
+            midi_dataset, batch_size=batch_size, shuffle=False)
 
+        self.model_type = model_type
 
-def node_clustering(model, x, edge_index, num_clusters):
-    """
-    :param model:
-    :param x:
-    :param edge_index:
-    :param num_clusters:
-    :return:
-    """
-    model.eval()
-    z = model.encode(x, edge_index)
-    embeddings = z.detach().cpu().numpy()
-    kmeans = KMeans(n_clusters=num_clusters)
-    clusters = kmeans.fit_predict(embeddings)
-    return clusters
+        # self.scheduler = StepLR(self.optimizer, step_size=10, gamma=0.1)
 
+    def train(self, train_data, is_variational):
+        """
+        :param train_data:
+        :param is_variational:
+        :return:
+        """
+        self.model.train()
+        self.optimizer.zero_grad()
+        z = self.model.encode(train_data.x, train_data.edge_index)
+        # z = model.encode(train_data.x, train_data.edge_index.long())
+        loss = self.model.recon_loss(z, train_data.pos_edge_label_index)
+        if is_variational:
+            loss = loss + (1 / train_data.num_nodes) * self.model.kl_loss()
+        loss.backward()
+        self.optimizer.step()
+        return float(loss)
 
-def visualize_embeddings(model, x, edge_index):
-    """
-    :param model:
-    :param x:
-    :param edge_index:
-    :return:
-    """
-    model.eval()
-    z = model.encode(x, edge_index)
-    embeddings = z.detach().cpu().numpy()
+    @torch.no_grad()
+    def test(self, data, model):
+        """
+        :param data:
+        :param model:
+        :return:
+        """
+        model.eval()
+        z = model.encode(data.x, data.edge_index)
 
-    tsne = TSNE(n_components=2)
-    reduced_embeddings = tsne.fit_transform(embeddings)
+        pos_indices = data.pos_edge_label_index.t()
+        neg_indices = data.neg_edge_label_index.t()
 
-    plt.scatter(reduced_embeddings[:, 0], reduced_embeddings[:, 1], s=20)
-    plt.show()
+        all_indices = torch.cat([pos_indices, neg_indices], dim=0)
+        y_true = torch.zeros((len(all_indices),), dtype=torch.long)
+        y_true[:pos_indices.size(0)] = 1
 
+        all_indices = all_indices.to(torch.long)
+        edge_index = torch.stack([all_indices[:, 0], all_indices[:, 1]], dim=0)
+        #
+        y_pred = self.model.decoder(z, edge_index)
+        y_pred = (y_pred > 0.5).type(torch.long)
+        acc = (y_pred == y_true).sum().item() / y_true.size(0)
+        return self.model.test(z, data.pos_edge_label_index, data.neg_edge_label_index), acc
 
-def main(args):
-    """
-    :param args:
-    :return:
-    """
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    transform = T.Compose([
-        T.NormalizeFeatures(),
-        T.ToDevice(device),
-        RandomNodeDrop(p=0.1),
-        T.RandomLinkSplit(num_val=0.05, num_test=0.1, is_undirected=True,
-                          split_labels=True, add_negative_train_samples=False),
-    ])
+    @staticmethod
+    def predict_link(model, x, edge_index, node_a, node_b):
+        """take edge index model x , node_a and node_b and predict similarity
+        :param model:
+        :param x:
+        :param edge_index:
+        :param node_a:
+        :param node_b:
+        :return:
+        """
+        model.eval()
+        z = model.encode(x, edge_index)
+        similarity = torch.sigmoid(torch.dot(z[node_a], z[node_b]))
+        return similarity.item()
 
-    dataset = MidiDataset(root="./data", transform=transform)
-    batch_size = args.batch_size
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+    @staticmethod
+    def node_clustering(model, x, edge_index, num_clusters):
+        """
+        :param model:
+        :param x:
+        :param edge_index:
+        :param num_clusters:
+        :return:
+        """
+        model.eval()
+        z = model.encode(x, edge_index)
+        embeddings = z.detach().cpu().numpy()
+        kmeans = KMeans(n_clusters=num_clusters)
+        clusters = kmeans.fit_predict(embeddings)
+        return clusters
 
-    in_channels, out_channels = dataset.num_features, 32
+    @staticmethod
+    def visualize_embeddings(model, x, edge_index):
+        """Take model x and edge index and visualize embedding space.
+        :param model:
+        :param x:
+        :param edge_index:
+        :return:
+        """
+        model.eval()
+        z = model.encode(x, edge_index)
+        embeddings = z.detach().cpu().numpy()
 
-    if not args.variational and not args.linear:
-        model = GAE(GCNEncoder(in_channels, out_channels))
-        print("Creating GAE with GCNEncoder")
-    elif not args.variational and args.linear:
-        model = GAE(LinearEncoder(in_channels, out_channels))
-        print("Creating GA with LinearEncoder")
-    elif args.variational and not args.linear:
-        model = VGAE(VariationalGCNEncoder(in_channels, out_channels))
-        print("Creating VGAE with VariationalGCNEncoder")
-    elif args.variational and args.linear:
-        model = VGAE(VariationalLinearEncoder(in_channels, out_channels))
-        print("Creating VGAE with VariationalLinearEncoder")
+        tsne = TSNE(n_components=2)
+        reduced_embeddings = tsne.fit_transform(embeddings)
 
-    models = [
-        ("GAE with GCNEncoder", GAE(GCNEncoder(in_channels, out_channels))),
-        ("GAE with LinearEncoder", GAE(LinearEncoder(in_channels, out_channels))),
-        ("VGAE with VariationalGCNEncoder", VGAE(VariationalGCNEncoder(in_channels, out_channels))),
-        ("VGAE with VariationalLinearEncoder", VGAE(VariationalLinearEncoder(in_channels, out_channels))),
-    ]
+        plt.scatter(reduced_embeddings[:, 0], reduced_embeddings[:, 1], s=20)
+        plt.show()
 
-    for model_name, model in models:
-        model = model.to(device)
-        optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+    def load_model(self, model_path):
+        """Load the saved model from the specified path
+        :param model_path:
+        :return:
+        """
+        self.model.load_state_dict(torch.load(model_path))
+        self.model.eval()
 
-        test_x_list = []
-        test_edge_index_list = []
-        for epoch in range(1, args.epochs + 1):
-            train_loss = 0
-            for batch in dataloader:
-                train_data, val_data, test_data = batch
-                loss = train(train_data, model, optimizer, args)
-                train_loss += loss
-                metric, acc = test(test_data, model)
-                auc, ap = metric
-                print(f'Epoch: {epoch:03d}, Model: {model_name: <40}, Loss: {loss:.4f}, '
-                      f'AUC: {auc:.4f}, AP: {ap:.4f}, ACC: {acc:.4f}')
-                if epoch == 1:
-                    test_x_list.append(test_data.x)
-                    test_edge_index_list.append(test_data.edge_index)
+    def trainer(self, cmd, train_all: Optional[bool] = True):
+        """
+        :param train_all: train all models otherwise take from args (Default True)
+        :param cmd:
+        :return:
+        """
+        in_channels, out_channels = dataset.num_features, 32
 
-            # for batch in dataloader:
-            #     train_data, val_data, test_data = batch
-            # train_loss /= len(dataloader)
-            # metric_val, acc_val = test(val_data, model)
-            # auc_val, ap_val = metric_val
+        models = []
+        if train_all:
+            models = [
+                ("GAE_GCNEncoder", GAE(GCNEncoder(in_channels, out_channels))),
+                ("GAE_LinearEncoder", GAE(LinearEncoder(in_channels, out_channels))),
+                ("VGAE_VariationalGCNEncoder", VGAE(VariationalGCNEncoder(in_channels, out_channels))),
+                ("VGAE_VariationalLinearEncoder", VGAE(VariationalLinearEncoder(in_channels, out_channels))),
+            ]
+        else:
+            if not cmd.variational and not cmd.linear:
+                model = GAE(GCNEncoder(in_channels, out_channels))
+                models = [model]
+                print("Creating GAE with GCNEncoder")
+            elif not cmd.variational and cmd.linear:
+                model = GAE(LinearEncoder(in_channels, out_channels))
+                models = [model]
+                print("Creating GA with LinearEncoder")
+            elif cmd.variational and not cmd.linear:
+                model = VGAE(VariationalGCNEncoder(in_channels, out_channels))
+                models = [model]
+                print("Creating VGAE with VariationalGCNEncoder")
+            elif cmd.variational and cmd.linear:
+                model = VGAE(VariationalLinearEncoder(in_channels, out_channels))
+                models = [model]
+                print("Creating VGAE with VariationalLinearEncoder")
 
-            print(f'Epoch: {epoch:03d}, Train Loss: {train_loss:.4f}, ')
-            if epoch % args.save_interval == 0:
-                torch.save(model.state_dict(), f'{model_name}_epoch_{epoch}.pt')
+        for model_name, model in models:
+            self.model_type = model_name
 
-    test_x = torch.cat(test_x_list, dim=0)
-    test_edge_index = torch.cat(test_edge_index_list, dim=1)
-    combined_test_data = Data(x=test_x, edge_index=test_edge_index)
+            self.optimizer = torch.optim.Adam(model.parameters(), lr=self._lr)
+            self.model = model
+            self.load_checkpoint(model_name)
+            self.model = model.to(device)
 
-    node_a_index, node_b_index = 5, 10
-    node_a_hash = dataset.index_to_hash[node_a_index]
-    node_b_hash = dataset.index_to_hash[node_b_index]
+            best_val_acc = 0.
+            best_epoch = 0.
+            best_test_acc = 0.
 
-    note_a = dataset.notes_to_hash[node_a_hash]
-    note_b = dataset.notes_to_hash[node_b_hash]
-    print(dataset.hash_to_notes)
+            test_x_list = []
+            test_edge_index_list = []
 
-    similarity = predict_link(
-        model, combined_test_data.x,
-        combined_test_data.edge_index,
-        node_a_index, node_b_index)
+            current_epoch = len(self.train_losses)
+            print(f"current_epoch {current_epoch}")
+            for e in range(current_epoch, self._epochs + 1):
 
-    print(f'Similarity between node with hash {note_a} and node with hash {note_b}: {similarity}')
+                train_loss = 0.
+                num_batches = len(self.train_loader)
+                test_mean_acc = np.zeros(num_batches)
+                test_mean_auc = np.zeros(num_batches)
+                test_mean_ap = np.zeros(num_batches)
 
-    # num_clusters = 5
-    # clusters = node_clustering(model, combined_test_data.x, combined_test_data.edge_index, num_clusters)
-    # print(f'Node clusters: {clusters}')
-    # visualize_embeddings(model, combined_test_data.x, combined_test_data.edge_index)
+                for i, batch in enumerate(self.train_loader):
+                    train_data, val_data, test_data = batch
+                    loss = self.train(train_data, cmd.variational)
+                    train_loss += loss
+                    metric, acc = self.test(test_data, model)
+                    auc, ap = metric
+                    test_mean_acc[i] = acc
+                    test_mean_auc[i] = auc
+                    test_mean_ap[i] = ap
+                    print(f'Epoch: {e:03d}, Model: {model_name: <40}, Loss: {loss:.4f}, '
+                          f'AUC: {auc:.4f}, AP: {ap:.4f}, ACC: {acc:.4f}')
+                    num_batches += 1
+
+                    if e == 1:
+                        test_x_list.append(test_data.x)
+                        test_edge_index_list.append(test_data.edge_index)
+
+                loss_avg = train_loss / num_batches
+                self.update_metrics(loss_avg)
+
+                if test_mean_acc.mean() > best_val_acc:
+                    best_val_acc = test_mean_acc.mean()
+                    best_epoch = e
+                    best_test_acc = test_mean_acc.mean()
+
+                self.update_test_metric(test_acc=test_mean_acc.mean(),
+                                        test_auc=test_mean_auc.mean(),
+                                        test_ap=test_mean_ap.mean())
+
+                print(f'Epoch: {e:03d}, avg train loss: {loss_avg:.4f}')
+                if e % self.save_freq == 0:
+                    self.save_checkpoint(e, self.optimizer.state_dict(), model_name=model_name)
+
+            print(f"Best Epoch: {best_epoch}, Test Acc: {best_test_acc:.5f}")
+            self.plot_metrics()
+            self.clear_metric()
+            current_epoch = 0
+            best_val_acc = 0
+
+    def inference(self, model, test_x_list, test_edge_index_list):
+        """
+        :return:
+        """
+        test_x = torch.cat(test_x_list, dim=0)
+        test_edge_index = torch.cat(test_edge_index_list, dim=1)
+        combined_test_data = Data(x=test_x, edge_index=test_edge_index)
+
+        node_a_index, node_b_index = 5, 10
+        node_a_hash = dataset.index_to_hash[node_a_index]
+        node_b_hash = dataset.index_to_hash[node_b_index]
+
+        note_a = dataset.notes_to_hash[node_a_hash]
+        note_b = dataset.notes_to_hash[node_b_hash]
+        print(dataset.hash_to_notes)
+
+        similarity = self.predict_link(
+            model, combined_test_data.x,
+            combined_test_data.edge_index,
+            node_a_index, node_b_index)
+
+        print(f'Similarity between node with hash {note_a} and node with hash {note_b}: {similarity}')
+        # num_clusters = 5
+        # clusters = node_clustering(model, combined_test_data.x, combined_test_data.edge_index, num_clusters)
+        # print(f'Node clusters: {clusters}')
+        # visualize_embeddings(model, combined_test_data.x, combined_test_data.edge_index)
+
+        # # Predict link between node_a and node_b
+        # node_a, node_b = 5, 10
+        # similarity = predict_link(model, test_data.x, test_data.edge_index, node_a, node_b)
+        # print(f'Similarity between node {node_a} and {node_b}: {similarity}')
+        #
+        # # Perform node clustering
+        # num_clusters = 5
+        # clusters = node_clustering(model, test_data.x, test_data.edge_index, num_clusters)
+        # print(f'Node clusters: {clusters}')
+        #
+        # # Visualize embeddings
+        # visualize_embeddings(model, test_data.x, test_data.edge_index)
 
 
 def random_edge_drop_checker():
     """Validate random edge  drop.  It should be less num edges.
     :return:
     """
-    transform = RandomEdgeDrop(p=0.5)
-    dataset = MidiDataset(root="./data")
-    dataset.transform = transform
-    dataloader = DataLoader(dataset, batch_size=2)
-    # Check number of nodes before and after RandomNodeDrop transformation
+    _transform = RandomEdgeDrop(p=0.5)
+    _dataset = MidiDataset(root="./data")
+    dataset.transform = _transform
+    dataloader = DataLoader(_dataset, batch_size=2)
+    # check number of nodes before and after RandomNodeDrop transformation
     for batch in dataloader:
         data = batch[0]
         print("Number of nodes before transformation:", data.edge_index)
@@ -416,49 +537,56 @@ def random_edge_drop_checker():
 
 
 def random_node_drop_checker():
-    """Validate random drop is working.  It should be less number of nodes
+    """Validate random drop is working.  It should be less numb of nodes
     :return:
     """
-    transform = RandomNodeDrop(p=0.5)
-    dataset = MidiDataset(root="./data")
-    dataset.transform = transform
-    dataloader = DataLoader(dataset, batch_size=2)
+    _transform = RandomNodeDrop(p=0.5)
+    _dataset = MidiDataset(root="./data")
+    dataset.transform = _transform
+    dataloader = DataLoader(_dataset, batch_size=2)
     # Check number of nodes before and after RandomNodeDrop transformation
-    for batch in dataloader:
+    for batch in iter(dataloader):
         data = batch[0]
         print("Number of nodes before transformation:", data.num_nodes)
         data = transform(data)
         print("Number of nodes after transformation:", data.num_nodes)
 
 
-try:
-    import google.colab
-    IN_COLAB = True
-except:
-    IN_COLAB = False
-
 if __name__ == '__main__':
     """
     """
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     parser = argparse.ArgumentParser()
     parser.add_argument('--variational', action='store_true')
     parser.add_argument('--linear', action='store_true')
     parser.add_argument('--batch_size', type=int, default=32)
-    parser.add_argument('--epochs', type=int, default=400)
+    parser.add_argument('--epochs', type=int, default=10)
     parser.add_argument('--save_interval', type=int, default=200)
     parser.add_argument('--wandb', action='store_true', help='Track experiment')
-    args = parser.parse_args()
-    main(args)
+    parser.add_argument('--hidden_dim', type=int, default=32)
+    parser.add_argument('--lr', type=float, default=0.01)
+    parser.add_argument('--graph_per_instrument', type=bool, default=False)
+    parser.add_argument('--random_split', type=bool, default=False)
 
-    # # Predict link between node_a and node_b
-    # node_a, node_b = 5, 10
-    # similarity = predict_link(model, test_data.x, test_data.edge_index, node_a, node_b)
-    # print(f'Similarity between node {node_a} and {node_b}: {similarity}')
-    #
-    # # Perform node clustering
-    # num_clusters = 5
-    # clusters = node_clustering(model, test_data.x, test_data.edge_index, num_clusters)
-    # print(f'Node clusters: {clusters}')
-    #
-    # # Visualize embeddings
-    # visualize_embeddings(model, test_data.x, test_data.edge_index)
+    args = parser.parse_args()
+
+    transform = T.Compose([
+        T.NormalizeFeatures(),
+        T.ToDevice(device),
+        RandomNodeDrop(p=0.1),
+        T.RandomLinkSplit(num_val=0.05, num_test=0.1, is_undirected=True,
+                          split_labels=True, add_negative_train_samples=False),
+    ])
+
+    dataset = MidiDataset(root="./data",
+                          transform=transform)
+
+    graph_vaes = VariationGae(
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+        midi_dataset=dataset,
+        hidden_dim=args.hidden_dim,
+        model_type="",
+        lr=args.lr,
+        activation=Activation.PReLU)
+    graph_vaes.trainer(args)

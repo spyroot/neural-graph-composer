@@ -85,6 +85,10 @@ class Example02(Experiments):
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.0005)
 
     def train_epoch(self):
+        """
+
+        :return:
+        """
         self.model.train()
         epoch_loss = 0
         loss_all = 0
@@ -113,7 +117,7 @@ class Example02(Experiments):
         """
         :return:
         """
-        test_acc = 0
+        test_acc = 0.
         for e in range(1, self._epochs):
             epoch_loss = self.train_epoch()
             test_acc = self.test()

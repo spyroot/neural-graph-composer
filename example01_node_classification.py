@@ -201,7 +201,12 @@ class ExampleNodeClassification(Experiments):
         :param model_type:  (GCN3/GAT)
          :param lr: learning rate.
         """
-        super().__init__(epochs, batch_size, midi_dataset)
+        super().__init__(
+            epochs, batch_size, midi_dataset,
+            train_update_rate=train_update_rate,
+            test_update_freq=test_update_freq,
+            eval_update_freq=eval_update_freq,
+            save_freq=save_freq)
 
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         assert self.device is not None, "Device is not set."
@@ -211,8 +216,6 @@ class ExampleNodeClassification(Experiments):
         assert self._batch_size is not None, "Batch size is not set."
 
         self.datasize = 0
-        self.start_epoch = 0
-        self.save_freq = save_freq
         self.test_size = 0
         self._num_workers = 0
         self._is_gin = False
@@ -222,10 +225,6 @@ class ExampleNodeClassification(Experiments):
         self._feature_dim = midi_dataset.num_node_features
         self._num_classes = midi_dataset.total_num_classes
         self._lr = lr
-        self.train_update_rate = train_update_rate
-        self.test_update_freq = test_update_freq
-        self.eval_update_freq = eval_update_freq
-        self.current_epoch = 0
 
         self.train_dataset = midi_dataset
         self.test_dataset = midi_dataset
@@ -268,23 +267,6 @@ class ExampleNodeClassification(Experiments):
             self.model.parameters(), lr=self._lr, weight_decay=5e-4)
 
         self.scheduler = StepLR(self.optimizer, step_size=10, gamma=0.1)
-
-        self.val_precisions = []
-        self.val_f1s = []
-        self.val_accs = []
-        self.val_recalls = []
-        self.test_recalls = []
-        self.test_precisions = []
-        self.test_accs = []
-        self.test_f1s = []
-        self.train_precisions = []
-        self.train_recalls = []
-        self.train_f1s = []
-        self.train_accs = []
-        self.train_losses = []
-        self.metrics_dir = "metric"
-        self.save_metrics = True
-        self.metrics_rate = 100
 
     def train_epoch(self):
         """
@@ -357,144 +339,6 @@ class ExampleNodeClassification(Experiments):
 
         loss_avg = loss_all / total_graph
         return loss_avg, train_f1, train_acc, recall, precision
-
-    def plot_metrics(self, num_epochs, output_dir="metric", model_type=""):
-        """Plot metrics
-        :return:
-        """
-        if self.model_type and len(self.model_type) > 0:
-            model_type = self.model_type
-
-        if not (isinstance(self.train_losses, (list, np.ndarray))
-                and isinstance(self.train_f1s, (list, np.ndarray))
-                and isinstance(self.train_accs, (list, np.ndarray))
-                and isinstance(self.train_precisions, (list, np.ndarray))
-                and isinstance(self.train_recalls, (list, np.ndarray))):
-            print("accept list or nd.ndarray")
-            return
-
-        if not (self.train_losses and self.train_f1s and self.train_accs
-                and self.train_precisions and self.train_recalls):
-            print("Not enough metrics to plot")
-            return
-
-        epochs = range(1, len(self.train_losses) + 1)
-        plt.figure(figsize=(15, 10))
-
-        plt.plot(epochs, self.train_losses, label="train_loss")
-        plt.plot(epochs, self.train_f1s, label="train_f1")
-        plt.plot(epochs, self.train_accs, label="train_acc")
-        plt.plot(epochs, self.train_precisions, label="train_precision")
-        plt.plot(epochs, self.train_recalls, label="train_recall")
-
-        if self.val_accs and self.val_f1s and self.val_precisions and self.val_recalls:
-            val_epochs = range(self.eval_update_freq,
-                               len(self.val_accs) * self.eval_update_freq + 1,
-                               self.eval_update_freq)
-            plt.plot(val_epochs, self.val_accs, label="val_acc")
-            plt.plot(val_epochs, self.val_f1s, label="val_f1")
-            plt.plot(val_epochs, self.val_precisions, label="val_precision")
-            plt.plot(val_epochs, self.val_recalls, label="val_recall")
-
-        if self.test_accs and self.test_f1s and self.test_precisions and self.test_recalls:
-            test_epochs = range(self.test_update_freq,
-                                len(self.test_accs) * self.test_update_freq + 1,
-                                self.test_update_freq)
-            plt.plot(test_epochs, self.test_accs, label="test_acc")
-            plt.plot(test_epochs, self.test_f1s, label="test_f1")
-            plt.plot(test_epochs, self.test_precisions, label="test_precision")
-            plt.plot(test_epochs, self.test_recalls, label="test_recall")
-
-        plt.xlabel("Epoch")
-        plt.ylabel("Metric")
-        plt.title(f"{model_type} Training Metrics")
-        plt.legend()
-
-        if output_dir:
-            if not os.path.exists(output_dir):
-                os.makedirs(output_dir)
-            print(f"Saving plot {model_type}_metrics.png")
-            filename = os.path.join(output_dir, f"{model_type}_metrics.png")
-            plt.savefig(filename)
-
-        plt.show()
-
-    def update_metrics(self, loss_avg, train_f1, train_acc, train_recall, train_precision):
-        """Update the training metrics for each epoch.
-        :param loss_avg:
-        :param train_f1:
-        :param train_acc:
-        :param train_recall:
-        :param train_precision:
-        :return:
-        """
-        self.train_losses.append(loss_avg)
-        self.train_f1s.append(train_f1)
-        self.train_accs.append(train_acc)
-        self.train_recalls.append(train_recall)
-        self.train_precisions.append(train_precision)
-
-        if self.save_metrics and self.metrics_rate and self.current_epoch % self.metrics_rate == 0:
-            if self.metrics_dir:
-                if not os.path.exists(self.metrics_dir):
-                    os.makedirs(self.metrics_dir)
-            metrics = {
-                'test_accs': self.val_accs,
-                'tet_f1s': self.val_f1s,
-                'test_precisions': self.val_precisions,
-                'test_recalls': self.val_recalls
-            }
-            filename = os.path.join(self.metrics_dir, f"{self.model_type}_train_metrics.pt")
-            torch.save(metrics, filename)
-
-    def update_test_metric(self, test_acc, test_f1, test_precision, test_recall):
-        """Update test metrics.
-        :param test_acc:
-        :param test_f1:
-        :param test_precision:
-        :param test_recall:
-        :return:
-        """
-        self.test_accs.append(test_acc)
-        self.test_f1s.append(test_f1)
-        self.test_precisions.append(test_precision)
-        self.test_recalls.append(test_recall)
-
-        if self.save_metrics and self.metrics_rate and self.current_epoch % self.metrics_rate == 0:
-            metrics = {
-                'test_accs': self.val_accs,
-                'tet_f1s': self.val_f1s,
-                'test_precisions': self.val_precisions,
-                'test_recalls': self.val_recalls
-            }
-            if self.metrics_dir:
-                if not os.path.exists(self.metrics_dir):
-                    os.makedirs(self.metrics_dir)
-            filename = os.path.join(self.metrics_dir, f"{self.model_type}_test_metrics.pt")
-            torch.save(metrics, filename)
-
-    def update_val_metric(self, val_acc, val_f1, val_precision, val_recall):
-        """ Update validation metrics.
-        :param val_acc: validation accuracy.
-        :param val_f1: validation f1 score.
-        :param val_precision: validation precision.
-        :param val_recall: validation recall.
-        :return:
-        """
-        self.val_accs.append(val_acc)
-        self.val_f1s.append(val_f1)
-        self.val_precisions.append(val_precision)
-        self.val_recalls.append(val_recall)
-
-        if self.save_metrics and self.metrics_rate and self.current_epoch % self.metrics_rate == 0:
-            metrics = {
-                'val_accs': self.val_accs,
-                'val_f1s': self.val_f1s,
-                'val_precisions': self.val_precisions,
-                'val_recalls': self.val_recalls
-            }
-            filename = os.path.join(self.metrics_dir, f"{self.model_type}_validation_metrics.pt")
-            torch.save(metrics, filename)
 
     def train(self):
         """
