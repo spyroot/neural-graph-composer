@@ -16,6 +16,7 @@ from torch import nn
 import torch.nn.functional as F
 import torch_geometric
 import torch_geometric.transforms as T
+from torch.optim.lr_scheduler import StepLR
 from torch_geometric.loader import DataLoader
 from torch_geometric.nn import GCNConv, GINConv, GATConv
 import wandb
@@ -113,6 +114,7 @@ class GCN3(torch.nn.Module):
 class GIN(torch.nn.Module):
     """
     """
+
     def __init__(self, num_feature, hidden_channels, num_classes: int):
         super(GIN, self).__init__()
         self.conv1 = GINConv(torch.nn.Sequential(
@@ -180,7 +182,8 @@ class ExampleNodeClassification(Experiments):
             activation: Optional[Activation] = Activation.ReLU,
             train_update_rate: Optional[int] = 1,
             test_update_freq: Optional[int] = 10,
-            eval_update_freq: Optional[int] = 20):
+            eval_update_freq: Optional[int] = 20,
+            save_freq: Optional[int] = 20):
         """Example experiment for training a graph neural network on MIDI data.
 
         :param epochs: num epochs
@@ -199,7 +202,7 @@ class ExampleNodeClassification(Experiments):
 
         self.datasize = 0
         self.start_epoch = 0
-        self.save_freq = 2
+        self.save_freq = save_freq
         self.test_size = 0
         self._num_workers = 0
         self._is_gin = False
@@ -252,6 +255,8 @@ class ExampleNodeClassification(Experiments):
 
         self.optimizer = torch.optim.Adam(
             self.model.parameters(), lr=self._lr, weight_decay=5e-4)
+
+        self.scheduler = StepLR(self.optimizer, step_size=10, gamma=0.1)
 
     def train_epoch(self):
         """
@@ -330,13 +335,12 @@ class ExampleNodeClassification(Experiments):
                      train_precision, train_recall,
                      val_acc, val_f1, val_precision, val_recall,
                      test_acc, test_f1, test_precision, test_recall,
-                     num_epochs, output_dir="metric",  model_type=""):
+                     num_epochs, output_dir="metric", model_type=""):
         """
         :return:
         """
-        if not (train_loss and train_f1 and train_acc and train_precision and train_recall
-                and val_acc and val_f1 and val_precision and val_recall
-                and test_acc and test_f1 and test_precision and test_recall):
+        if not (train_loss and train_f1 and train_acc
+                and train_precision and train_recall):
             print("Not enough metrics to plot")
             return
 
@@ -386,21 +390,9 @@ class ExampleNodeClassification(Experiments):
         best_epoch = 0.
         best_test_acc = 0.
 
-        train_losses = []
-        train_f1s = []
-        train_accs = []
-        train_recalls = []
-        train_precisions = []
-
-        val_accs = []
-        val_f1s = []
-        val_precisions = []
-        val_recalls = []
-
-        test_accs = []
-        test_f1s = []
-        test_precisions = []
-        test_recalls = []
+        train_losses, train_f1s, train_accs, train_recalls, train_precisions = [], [], [], [], []
+        val_accs, val_f1s, val_precisions, val_recalls = [], [], [], []
+        test_accs, test_f1s, test_precisions, test_precisions, test_recalls = [], [], [], []
 
         for e in range(1, self._epochs + 1):
             loss_avg, train_f1, train_acc, train_recall, train_precision = self.train_epoch()
@@ -411,6 +403,8 @@ class ExampleNodeClassification(Experiments):
                 f"Train F1: {train_f1:.5f}, "
                 f"Train Precision: {train_precision:.5f}, "
                 f"Train Recall: {train_recall:.5f}")
+
+            self.scheduler.step()
 
             train_losses.append(loss_avg)
             train_f1s.append(train_f1)
@@ -505,7 +499,6 @@ class ExampleNodeClassification(Experiments):
 
             data = batch.to(self.device)
             out = self.model(data)
-            print("num graph", b.num_graphs)
 
             if self._is_gin:
                 node_idx = torch.arange(out.shape[0]).to(self.device)
@@ -551,7 +544,6 @@ class ExampleNodeClassification(Experiments):
         precision = tp / (tp + fp + 1e-9)
         recall = tp / (tp + fn + 1e-9)
         f1 = 2 * (precision * recall) / (precision + recall + 1e-9)
-
         return accuracy, f1, precision, recall
 
     def save_model(self, filename, output_dir='checkpoints'):
@@ -668,4 +660,3 @@ if __name__ == '__main__':
         lr=args.lr,
         activation=Activation.PReLU)
     example_model.train()
-
