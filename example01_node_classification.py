@@ -216,6 +216,7 @@ class ExampleNodeClassification(Experiments):
         self.train_update_rate = train_update_rate
         self.test_update_freq = test_update_freq
         self.eval_update_freq = eval_update_freq
+        self.current_epoch = 0
 
         self.train_dataset = midi_dataset
         self.test_dataset = midi_dataset
@@ -274,6 +275,7 @@ class ExampleNodeClassification(Experiments):
         self.train_losses = []
         self.metrics_dir = "metric"
         self.save_metrics = True
+        self.metrics_rate = 100
 
     def train_epoch(self):
         """
@@ -419,7 +421,7 @@ class ExampleNodeClassification(Experiments):
         self.train_recalls.append(train_recall)
         self.train_precisions.append(train_precision)
 
-        if self.save_metrics:
+        if self.save_metrics and self.metrics_rate and self.current_epoch % self.metrics_rate == 0:
             if self.metrics_dir:
                 if not os.path.exists(self.metrics_dir):
                     os.makedirs(self.metrics_dir)
@@ -445,7 +447,7 @@ class ExampleNodeClassification(Experiments):
         self.test_precisions.append(test_precision)
         self.test_recalls.append(test_recall)
 
-        if self.save_metrics:
+        if self.save_metrics and self.metrics_rate and self.current_epoch % self.metrics_rate == 0:
             metrics = {
                 'test_accs': self.val_accs,
                 'tet_f1s': self.val_f1s,
@@ -471,7 +473,7 @@ class ExampleNodeClassification(Experiments):
         self.val_precisions.append(val_precision)
         self.val_recalls.append(val_recall)
 
-        if self.save_metrics:
+        if self.save_metrics and self.metrics_rate and self.current_epoch % self.metrics_rate == 0:
             metrics = {
                 'val_accs': self.val_accs,
                 'val_f1s': self.val_f1s,
@@ -491,7 +493,9 @@ class ExampleNodeClassification(Experiments):
         best_epoch = 0.
         best_test_acc = 0.
 
-        for e in range(1, self._epochs + 1):
+        current_epoch = len(self.train_losses)
+
+        for e in range(current_epoch, self._epochs + 1):
             loss_avg, train_f1, train_acc, train_recall, train_precision = self.train_epoch()
             print(
                 f"Epoch: {e}, "
@@ -678,6 +682,8 @@ class ExampleNodeClassification(Experiments):
         self.model.load_state_dict(checkpoint['model_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         self.start_epoch = checkpoint['epoch'] + 1
+        self.current_epoch = checkpoint['epoch'] + 1
+
         print(f"Loaded checkpoint from {checkpoint_path}.")
 
     def load_model(self, model_path):
