@@ -130,7 +130,7 @@ midi_seqs = MidiReader.read('neural_graph_composer/dataset/unit_test/test-c-majo
             print(f"  --> Neighbor: {nei}, Weight: {weight}")
 ```
 
-Graph topology
+### Graph topology
 
 ```bash
 Loading midi from a file neural_graph_composer/dataset/unit_test/test-c-major-scale.mid
@@ -151,7 +151,8 @@ Hash: -5931562334735143128, Notes: frozenset({71})
 Hash: 9062470186675362595, Notes: frozenset({72})
 ```
 
-PyG Data
+### PyG Data
+
 ```python
 midi_seqs = MidiReader.read(
     'neural_graph_composer/dataset/unit_test/test-c-major-scale.mid')
@@ -162,13 +163,103 @@ for pyg_data in graph_builder:
     print(pyg_data)
 ```
 
-Representing music composition as graphs provides several advantages over other formats. 
-Graphs are a natural way to represent hierarchical structures, such as the 
-multiple tracks in a MIDI file. Nodes in the graph can represent individual notes, and 
-edges can capture the relationships between the notes, such as chords and note sequences. 
+Example read all midi
 
-This graph representation can help capture the underlying structure of the music, 
-making it easier to analyze, visualize, and manipulate.
+```python
+    graph_builder = None
+    midi_dir = "neural_graph_composer/dataset/"
+    midi_files = glob.glob(midi_dir + "*.mid")
+    for raw_path in midi_files:
+        print(f"Reading {raw_path}")
+        # read file and construct graph
+        midi_seqs = MidiReader.read(raw_path)
+        print(f"midi seq number of seq {midi_seqs.num_instruments()}")
+        # we build per instrument
+        if graph_builder is None:
+            graph_builder = MidiGraphBuilder(
+                None, is_instrument_graph=True)
+
+        graph_builder.build(midi_seqs)
+
+        # graph_builder output iterator
+        for midi_data in graph_builder.graphs():
+            print(f"midi_data {midi_data}")
+```
+
+### Plot 
+
+```python
+    import matplotlib.pyplot as plt
+    import networkx as nx
+    from neural_graph_composer.midi_reader import MidiReader
+    from neural_graph_composer.midi_graph_builder import MidiGraphBuilder
+
+    midi_seqs = MidiReader.read('data/raw/a_night_in_tunisia_2_jc.mid')
+    graph_builder = MidiGraphBuilder()
+    graph_builder.build(midi_seqs, is_per_instrument=False)
+    g = graph_builder.sub_graphs[0]
+
+    # remap node labels to pitch names
+    note_names = {hash_val: list(note_set)[0] for hash_val, 
+    note_set in nx.get_node_attributes(g, 'label').items()}
+    remapped_labels = [note_names[hash_val] for hash_val in g.nodes()]
+
+    pos = nx.spring_layout(g, seed=42)
+    # draw nodes and edges
+    fig, ax = plt.subplots(figsize=(12, 12))
+    nx.draw_networkx_nodes(g, pos, ax=ax, node_size=150, node_color='lightblue')
+    nx.draw_networkx_edges(g, pos, ax=ax, edge_color='gray', alpha=0.5)
+    # label nodes
+    labels = nx.get_node_attributes(g, 'label')
+    label_pos = {k: (v[0], v[1] + 0.05) for k, v in pos.items()}
+    nx.draw_networkx_labels(g, label_pos, labels, font_size=8, font_family='sans-serif')
+    # set axis and title
+    ax.set_axis_off()
+    ax.set_title('MIDI Note Graph', fontweight='bold', fontsize=16)
+    # save figure
+    plt.savefig('graph.png', dpi=300)
+```
+
+### How to reverse indices back note set ?
+
+Example take a dataset and do reverse operation.
+Indices to Hash, Hash to Notes always saved to datasset
+
+```python
+import torch
+from neural_graph_composer.midi_dataset import MidiDataset
+def index_to_hash():
+    """Iterate and does reverse check, so we can
+      get Data.x and Data.y -> hash -> index -> pitch set
+    :return:
+    """
+    midi_dataset = MidiDataset(root="./data",
+                               per_instrument_graph=False)
+
+    train_mask = midi_dataset[0].train_mask
+    data_x = midi_dataset.data.x[train_mask]
+    data_y = midi_dataset.data.y[train_mask]
+    data_label = midi_dataset.data.label[train_mask]
+
+    print("Data.y", data_y)
+    print("Data.x", data_x)
+    print("Data.label", data_label)
+
+    for i in range(data_x.shape[0]):
+        node_features = data_x[i]
+        original_index = data_y[i].item()
+        hash_of_index = midi_dataset.index_to_hash[original_index]
+        original_set_of_notes = midi_dataset.hash_to_notes[hash_of_index]
+        original_set_tensor = torch.tensor(list(original_set_of_notes))
+        original_set_zero = torch.zeros((data_x.shape[0],))
+        original_set_tensor = torch.cat((original_set_tensor, original_set_zero), dim=0)[:data_x.shape[1]].unsqueeze(0)
+        node_features = node_features.unsqueeze(0)
+        sorted_node_features, _ = torch.sort(node_features)
+        sorted_original_set_tensor, _ = torch.sort(original_set_tensor)
+        if not torch.equal(sorted_node_features, sorted_original_set_tensor):
+            print(f"Error for index {i}, hash {hash_of_index}, notes {original_set_of_notes}:")
+            print(sorted_node_features, sorted_original_set_tensor)
+```
 
 ## Data Modeling.
 
