@@ -2,7 +2,7 @@ name: ngc
 
 channels:
   - pytorch
-  - nvidia/label/cuda-11.7.1
+  - nvidia/label/cuda-11.8
   - defaults
   - conda-forge
 
@@ -14,12 +14,17 @@ dependencies:
   - pytorch::pytorch-mutex = *=*cuda*
   - pip:
       - torchviz
-  - nvidia/label/cuda-11.7.1::cuda-toolkit = 11.7
+      - torch_geometric
+      - torch_scatter
+      - torch_sparse
+      - torch_cluster
+      - torch_spline_conv
+  - nvidia/label/cuda-12.0.1::cuda-toolkit = 11.8
   - cmake >= 3.11
   - make
   - cxx-compiler
-  - nvidia/label/cuda-11.7.1::cuda-nvcc
-  - nvidia/label/cuda-11.7.1::cuda-cudart-dev
+  - nvidia/label/cuda-12.0.1::cuda-nvcc
+  - nvidia/label/cuda-12.0.1::cuda-cudart-dev
   - pybind11 >= 2.10.1
   - optree >= 0.4.1
   - typing-extensions >= 4.0.0
@@ -30,4 +35,3 @@ dependencies:
   - tensorboard
   - tqdm
   - wandb
-  - pyg

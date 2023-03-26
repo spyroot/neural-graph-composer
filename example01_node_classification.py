@@ -10,7 +10,7 @@ we're trying to learn from a graph that represent.
 The default model set to GCN with 3 layer and PRELU activation.
 Second model GAT and we also include weighted edges.
 
-Graph Neural Ntwork layer
+Graph Neural Network layer
 
 Author Mus spyroot@gmail.com
            mbayramo@stanford.edu

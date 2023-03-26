@@ -25,11 +25,31 @@ cd neural_graph_composer/dataset
 
 ## Conda
 
+```bash
 conda env create --file conda-recipe.yaml
+conda activate ngc
+```
 
 ## Docker 
 
 tbd
+
+## Manual
+
+```bash
+conda create -n ngc_dev python=3.10
+conda activate ngc_dev
+conda install pytorch torchvision torchaudio pytorch-cuda=11.8 -c pytorch -c nvidia
+conda install matplotlib
+pip install librosa
+pip install torch_geometric
+pip install pretty_midi
+
+>>> import torch
+>>> torch.cuda.is_available()
+True
+ 
+```
 
 ## Notebooks for testing.
 
