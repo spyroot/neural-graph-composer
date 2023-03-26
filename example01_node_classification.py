@@ -1,10 +1,14 @@
 """
-Example Node classification based on 3 models.
-In this example we're trying to learn from a graph
-that represent.
+First problem a node classification.
 
-The default model set to GCN with 3
-layer and PRELU activation.
+We have a MIDI dataset and want a classifier to
+classify each node in the input graph.
+
+Example Node classification based on 3 models.In this example
+we're trying to learn from a graph that represent.
+
+The default model set to GCN with 3 layer and PRELU activation.
+Second model GAT and we also include weighted edges.
 
 Graph Neural Ntwork layer
 
@@ -45,6 +49,7 @@ class Activation(Enum):
 
 
 class GCN2(torch.nn.Module):
+    """ Two layer GCN with option to swap activation layers """
     def __init__(
             self, num_feature,
             hidden_channels,
@@ -69,7 +74,7 @@ class GCN2(torch.nn.Module):
         self.dropout_p = dropout_p
 
     def forward(self, data):
-        """
+        """Standard GCN layer batch data.
         :param data:
         :return:
         """
@@ -82,6 +87,8 @@ class GCN2(torch.nn.Module):
 
 
 class GCN3(torch.nn.Module):
+    """Three layer GCN with option swap activation layer.
+    """
     def __init__(
             self, num_feature: int,
             hidden_channels: int,
@@ -121,9 +128,10 @@ class GCN3(torch.nn.Module):
 
 
 class GIN(torch.nn.Module):
+    """GIN layer. Note the model output different shape that way we have
+    re-structure output to get same re-presentation as GCN3 that way we have special
+    case in train loop for GIN and GAT.
     """
-    """
-
     def __init__(self, num_feature, hidden_channels, num_classes: int):
         super(GIN, self).__init__()
         self.conv1 = GINConv(torch.nn.Sequential(
@@ -149,9 +157,11 @@ class GIN(torch.nn.Module):
 
 
 class GAT(torch.nn.Module):
+    """GAT that also  include edge_weight since we have directed weight graph.
+     we want to use weights.  Note the model output different shape that way we have
+    re-structure output to get same re-presentation as GCN3 that way we have special
+    case in train loop for GIN and GAT.
     """
-    """
-
     def __init__(self, num_feature, hidden_channels, num_classes,
                  use_edge_weights=True, dropout=0.3):
         super(GAT, self).__init__()
@@ -161,8 +171,7 @@ class GAT(torch.nn.Module):
         self.conv2 = GATConv(hidden_channels, num_classes, add_self_loops=True)
 
     def forward(self, data):
-        """
-
+        """Forward pass note we also pass edge_weight
         :param data:
         :return:
         """
@@ -182,6 +191,11 @@ class GAT(torch.nn.Module):
 
 
 class ExampleNodeClassification(Experiments):
+    """
+    In first experiment node classification task.
+    We have a MIDI dataset and want a classifier to classify each node in the input graph.
+    Model allow to swap activation and experiment with GCN , GIN and GAT.
+    """
     def __init__(
             self, epochs: int,
             batch_size: int,
@@ -192,7 +206,8 @@ class ExampleNodeClassification(Experiments):
             train_update_rate: Optional[int] = 1,
             test_update_freq: Optional[int] = 10,
             eval_update_freq: Optional[int] = 20,
-            save_freq: Optional[int] = 20):
+            save_freq: Optional[int] = 20,
+            is_data_split: Optional[bool] = False):
         """Example experiment for training a graph neural network on MIDI data.
 
         :param epochs: num epochs
@@ -218,13 +233,13 @@ class ExampleNodeClassification(Experiments):
         self.datasize = 0
         self.test_size = 0
         self._num_workers = 0
-        self._is_gin = False
-        self._is_gat = False
         self._batch_size = batch_size
         self._hidden_dim = hidden_dim
         self._feature_dim = midi_dataset.num_node_features
         self._num_classes = midi_dataset.total_num_classes
         self._lr = lr
+        self._is_gin = False
+        self._is_gat = False
 
         self.train_dataset = midi_dataset
         self.test_dataset = midi_dataset
@@ -232,11 +247,18 @@ class ExampleNodeClassification(Experiments):
         self.train_loader = DataLoader(
             midi_dataset, batch_size=self._batch_size, shuffle=True)
 
-        self.val_loader = DataLoader(
-            midi_dataset, batch_size=batch_size, shuffle=False)
+        # if we do random split it produce different dataset,
+        # at least this our current understanding how it works. :)
+        # if it wrong please let me know.
+        self.val_loader = None
+        self.test_loader = None
 
-        self.test_loader = DataLoader(
-            midi_dataset, batch_size=batch_size, shuffle=False)
+        if is_data_split:
+            self.val_loader = DataLoader(
+                midi_dataset, batch_size=batch_size, shuffle=False)
+
+            self.test_loader = DataLoader(
+                midi_dataset, batch_size=batch_size, shuffle=False)
 
         self.model_type = model_type
         if model_type == "GCN3":
@@ -285,6 +307,7 @@ class ExampleNodeClassification(Experiments):
 
         for i, b in enumerate(self.train_loader):
             train_batch = b
+            #
             # if isinstance(b, list):
             #     train_batch, _, _ = b
             # else:
@@ -420,7 +443,7 @@ class ExampleNodeClassification(Experiments):
         correct = 0
         tp, fp, fn = 0., 0., 0.
 
-        for b in data_loader:
+        for b in iter(data_loader):
             if isinstance(b, list):
                 if is_eval:
                     _, val, _ = b
@@ -496,7 +519,12 @@ class ExampleNodeClassification(Experiments):
         filename = os.path.join(output_dir, filename)
         torch.save(self.model.state_dict(), filename)
 
-    def save_checkpoint(self, epoch, optimizer_state, output_dir='checkpoints', model_name='model'):
+    def save_checkpoint(
+            self,
+            epoch,
+            optimizer_state,
+            output_dir='checkpoints',
+            model_name='model'):
         """save checkpoint each model gets on dir.
         :param model_name:
         :param epoch:
@@ -593,6 +621,7 @@ if __name__ == '__main__':
     # init_wandb(name=f'GCN3-{args.dataset}', heads=args.heads, epochs=args.epochs,
     #            hidden_channels=args.hidden_channels, lr=args.lr, device=device)
 
+    # todo add node random split and test.
     args = parser.parse_args()
     if args.random_split:
         transform = T.Compose([
@@ -607,7 +636,7 @@ if __name__ == '__main__':
         ])
     else:
         transform = T.Compose([
-            # T.NormalizeFeatures(),
+            T.NormalizeFeatures(),
             T.ToDevice(device),
         ])
 
