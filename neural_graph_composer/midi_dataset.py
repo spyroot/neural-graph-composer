@@ -4,6 +4,7 @@ import os
 import os.path as osp
 import pathlib
 import shutil
+import warnings
 from typing import Optional, List, Dict, Callable
 from pathlib import Path
 
@@ -46,6 +47,8 @@ class MidiDataset(InMemoryDataset):
     per_graph_slit dictates if we want threat each instrument as separate graph
     we want to merge each to single graph.
     """
+    _mirror = ['https://github.com/spyroot/neural-graph-composer/tree/main/data/processed']
+
     def __init__(self,
                  root,
                  transform: Optional[Callable] = None,
@@ -53,7 +56,7 @@ class MidiDataset(InMemoryDataset):
                  pre_filter: Optional[Callable] = None,
                  default_node_attr: str = 'attr',
                  midi_files: Optional[List[str]] = None,
-                 default_webserver: Optional[str] = "https://github.com/spyroot/neural-graph-composer/tree/main/data/processed",
+                 default_webserver: Optional[str] = _mirror[0],
                  train_ratio: Optional[float] = 0.7,
                  val_ratio: Optional[float] = 0.15,
                  per_instrument_graph: Optional[bool] = True,
@@ -431,7 +434,11 @@ class MidiDataset(InMemoryDataset):
                     self.files[i] = p.name
                     src_path = os.path.abspath(str(p))
                     logging.debug(f"Downloading {src_path} to {dst_path}")
-                    shutil.copy(src_path, dst_path)
+                    try:
+                        shutil.copy(src_path, dst_path)
+                    except shutil.SameFileError:
+                        warnings.warn(f"Data raw folder already containers {src_path} {dst_path}")
+                        pass
         else:
             for raw_file in self.raw_file_names:
                 logging.debug(f"Downloading {raw_file}")
