@@ -578,7 +578,7 @@ class MidiGraphBuilder:
                 self._notes_to_hash[pitch_set] = new_node_hash
                 self._hash_to_notes[new_node_hash] = pitch_set
 
-            if new_node_hash not in self._hash_to_index:
+            if new_node_hash not in self.hash_to_index:
                 current_length = len(self._hash_to_notes)
                 self._hash_to_index[new_node_hash] = current_length
                 self._index_to_hash[current_length] = new_node_hash
@@ -614,8 +614,6 @@ class MidiGraphBuilder:
                     midi_graph[last_node_hash][new_node_hash]['weight'] += 1.0
                 else:
                     midi_graph.add_node(new_node_hash, attr=new_x, label=pitch_names, node_hash=new_node_hash)
-                    # add self edge.
-                    midi_graph.add_edge(new_node_hash, new_node_hash, weight=1.0)
                     midi_graph.add_edge(last_node_hash, new_node_hash, weight=1.0)
                     node_weights[new_node_hash] = {last_node_hash: 1.0}
 
@@ -724,13 +722,14 @@ class MidiGraphBuilder:
         def from_file(cls, file_path: str,
                       per_instrument: Optional[bool] = True,
                       hidden_feature_size: int = 64) -> 'MidiGraphBuilder':
-            """Constructs a MidiGraphBuilder object from a MIDI file path.
+            """Constructs a MidiGraphBuilder object from a MIDI file path.:
             :param cls:
             :param file_path: A string representing the path to the MIDI file to be processed.
             :param per_instrument: A boolean indicating whether to build a graph for each instrument in the MIDI file.
             :param hidden_feature_size: The size of the hidden feature vector to use for the PyTorch Geometric graph.
             :return: A MidiGraphBuilder object constructed from the specified MIDI file.
             :rtype: MidiGraphBuilder
+            :return 'MidiGraphBuilder'
             """
             midi_seq = MidiReader.read(file_path)
             return cls(midi_seq, per_instrument=per_instrument, hidden_feature_size=hidden_feature_size)
