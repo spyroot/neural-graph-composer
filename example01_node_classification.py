@@ -18,6 +18,7 @@ Author Mus spyroot@gmail.com
 import argparse
 import glob
 import os
+import pathlib
 from enum import Enum
 from typing import Optional
 
@@ -640,7 +641,7 @@ if __name__ == '__main__':
             T.ToDevice(device),
         ])
 
-    ds = MidiDataset(root="./data",
+    ds = MidiDataset('./data',
                      transform=transform,
                      per_instrument_graph=args.graph_per_instrument,
                      tolerance=0.5)
