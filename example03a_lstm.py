@@ -1,5 +1,4 @@
 """
-
 Here we're trying
 In the context of graph completion, y typically represents the
 ground truth labels or features for all nodes in the graph

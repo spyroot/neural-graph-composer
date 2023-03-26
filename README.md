@@ -5,7 +5,10 @@ as a graph neural network and structure and investigate what insights
 we can gain from this approach.
 
 * Key papers.
-* 
+*   Semi-Supervised Classification with Graph Convolutional Networks https://arxiv.org/abs/1609.02907
+*   Variational Graph Auto-Encoders https://arxiv.org/abs/1611.07308
+*   The graph attentional operator from the `"Graph Attention Networks" https://arxiv.org/abs/1710.10903
+*   
 ## Before you run a code 
  
 * Change dir from where MIDI dataset download files.

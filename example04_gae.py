@@ -118,6 +118,9 @@ class RandomNodeDrop(T.BaseTransform):
             return edge_index[:, mask_all]
 
     def __repr__(self):
+        """
+        :return:
+        """
         return f'{self.__class__.__name__}(p={self.p})'
 
 
@@ -327,11 +330,12 @@ class VariationGae(Experiments):
     @staticmethod
     def predict_link(model, x, edge_index, node_a, node_b):
         """take edge index model x , node_a and node_b and predict similarity
-        :param model:
-        :param x:
-        :param edge_index:
-        :param node_a:
-        :param node_b:
+        between node a and node b.
+        :param model: trained model
+        :param x: original x from the input graph
+        :param edge_index: edge index
+        :param node_a: node a from a graph
+        :param node_b: node b from graph
         :return:
         """
         model.eval()
@@ -341,11 +345,11 @@ class VariationGae(Experiments):
 
     @staticmethod
     def node_clustering(model, x, edge_index, num_clusters):
-        """
-        :param model:
-        :param x:
-        :param edge_index:
-        :param num_clusters:
+        """ Compute k mean clustering
+        :param model: trained model
+        :param x: x from original graph
+        :param edge_index: edge index
+        :param num_clusters: number of clusters
         :return:
         """
         model.eval()
@@ -358,18 +362,17 @@ class VariationGae(Experiments):
     @staticmethod
     def visualize_embeddings(model, x, edge_index):
         """Take model x and edge index and visualize embedding space.
-        :param model:
-        :param x:
-        :param edge_index:
+        Output tsne.
+        :param model: trained model
+        :param x: x from that graph
+        :param edge_index: edge index.
         :return:
         """
         model.eval()
         z = model.encode(x, edge_index)
         embeddings = z.detach().cpu().numpy()
-
         tsne = TSNE(n_components=2)
         reduced_embeddings = tsne.fit_transform(embeddings)
-
         plt.scatter(reduced_embeddings[:, 0], reduced_embeddings[:, 1], s=20)
         plt.show()
 
@@ -449,6 +452,7 @@ class VariationGae(Experiments):
                     test_mean_acc[i] = acc
                     test_mean_auc[i] = auc
                     test_mean_ap[i] = ap
+
                     print(f'Epoch: {e:03d}, Model: {model_name: <40}, Loss: {loss:.4f}, '
                           f'AUC: {auc:.4f}, AP: {ap:.4f}, ACC: {acc:.4f}')
                     num_batches += 1
@@ -501,6 +505,8 @@ class VariationGae(Experiments):
             node_a_index, node_b_index)
 
         print(f'Similarity between node with hash {note_a} and node with hash {note_b}: {similarity}')
+
+        # this for inference after we trained.
         # num_clusters = 5
         # clusters = node_clustering(model, combined_test_data.x, combined_test_data.edge_index, num_clusters)
         # print(f'Node clusters: {clusters}')
@@ -554,6 +560,22 @@ def random_node_drop_checker():
 
 if __name__ == '__main__':
     """
+    AUC (Area Under the ROC Curve) and AP (Average Precision) 
+    are two commonly used evaluation metrics in binary classification tasks. 
+    AUC measures the ability of the model to distinguish between 
+    positive and negative examples.
+    
+    It is the area under the Receiver Operating Characteristic (ROC) 
+    curve, which is created by plotting the True Positive Rate (TPR) against 
+    the False Positive Rate (FPR) at different classification thresholds. 
+    AUC ranges from 0 to 1, where 1 indicates a perfect classifier.
+
+    AP measures the precision of the model at different recall levels. 
+    It is the average of the precision values calculated at different recall 
+    levels, where recall is the fraction of true positive examples that were 
+    correctly identified by the model out of all the true positive examples in the 
+    dataset. AP ranges from 0 to 1, where 1 indicates a perfect classifier.
+
     """
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     parser = argparse.ArgumentParser()
