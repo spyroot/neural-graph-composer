@@ -272,7 +272,7 @@ class ExampleNodeClassification(Experiments):
         elif model_type == "GAT":
             print(f"Creating GAT feature dim: {self._feature_dim} "
                   f"hidden size {self._hidden_dim} num classes "
-                  f"{self._num_classes} batch size {self._batch_size} lr {self._lr}").to(self.device)
+                  f"{self._num_classes} batch size {self._batch_size} lr {self._lr}")
             self.model = GAT(
                 self._feature_dim, self._hidden_dim, self._num_classes
             ).to(self.device)
@@ -611,7 +611,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--batch_size', type=int, default=2)
     parser.add_argument('--epochs', type=int, default=10)
-    parser.add_argument('--model_type', type=str, default='GCN3', choices=['GCN3', 'GIN', 'GAT'])
+    parser.add_argument('--model_type', type=str, default='GAT', choices=['GCN3', 'GIN', 'GAT'])
     parser.add_argument('--hidden_dim', type=int, default=32)
     parser.add_argument('--lr', type=float, default=0.01)
     parser.add_argument('--graph_per_instrument', type=bool, default=False)

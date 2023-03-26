@@ -4,19 +4,24 @@ This repository hosts a project that aims to explore the idea of representing a 
 as a graph neural network and structure and investigate what insights 
 we can gain from this approach.
 
-* Key papers.
-*   Semi-Supervised Classification with Graph Convolutional Networks https://arxiv.org/abs/1609.02907
-*   Variational Graph Auto-Encoders https://arxiv.org/abs/1611.07308
-*   The graph attentional operator from the `"Graph Attention Networks" https://arxiv.org/abs/1710.10903
-*   
+* Key papers. 
+  * Semi-Supervised Classification with Graph Convolutional Networks https://arxiv.org/abs/1609.02907
+  * Variational Graph Auto-Encoders https://arxiv.org/abs/1611.07308
+  * The graph attentional operator from the `"Graph Attention Networks" https://arxiv.org/abs/1710.10903
+
 ## Before you run a code 
  
-* Change dir from where MIDI dataset download files.
-The directory is used to specify the location where all MIDI files are stored. 
+* Change dir from where MIDI dataset download files. 
+* The directory is used to specify the location where all MIDI files are stored. 
 To access the MIDI files, a local web server is required since only I only
 publish free MIDI files i.e no license or commercial. 
 
 You can start the local web server by running the command 
+
+## Notebooks for testing.
+
+Note. I mainly use CLI, and I'm not a big fun of colab. It is tough to debug code.
+https://colab.research.google.com/drive/1GiTtZK_mnyBgfYt-TnObpjyJNuMXKJuQ?usp=sharing#scrollTo=vDHb74Zq9zWk
 
 ```bash
 cd neural_graph_composer/dataset
