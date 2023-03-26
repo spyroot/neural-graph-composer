@@ -10,7 +10,7 @@ we're trying to learn from a graph that represent.
 The default model set to GCN with 3 layer and PRELU activation.
 Second model GAT and we also include weighted edges.
 
-Graph Neural Network layer
+Graph Neural Ntwork layer
 
 Author Mus spyroot@gmail.com
            mbayramo@stanford.edu
@@ -18,7 +18,6 @@ Author Mus spyroot@gmail.com
 import argparse
 import glob
 import os
-import pathlib
 from enum import Enum
 from typing import Optional
 
@@ -37,6 +36,7 @@ from matplotlib import pyplot as plt
 from sklearn.metrics import f1_score
 from example_shared import Experiments
 from neural_graph_composer.midi_dataset import MidiDataset
+from neural_graph_composer.transforms import RandomEdgeDrop, RandomNodeDrop
 
 
 class Activation(Enum):
@@ -51,6 +51,7 @@ class Activation(Enum):
 
 class GCN2(torch.nn.Module):
     """ Two layer GCN with option to swap activation layers """
+
     def __init__(
             self, num_feature,
             hidden_channels,
@@ -90,6 +91,7 @@ class GCN2(torch.nn.Module):
 class GCN3(torch.nn.Module):
     """Three layer GCN with option swap activation layer.
     """
+
     def __init__(
             self, num_feature: int,
             hidden_channels: int,
@@ -133,6 +135,7 @@ class GIN(torch.nn.Module):
     re-structure output to get same re-presentation as GCN3 that way we have special
     case in train loop for GIN and GAT.
     """
+
     def __init__(self, num_feature, hidden_channels, num_classes: int):
         super(GIN, self).__init__()
         self.conv1 = GINConv(torch.nn.Sequential(
@@ -163,6 +166,7 @@ class GAT(torch.nn.Module):
     re-structure output to get same re-presentation as GCN3 that way we have special
     case in train loop for GIN and GAT.
     """
+
     def __init__(self, num_feature, hidden_channels, num_classes,
                  use_edge_weights=True, dropout=0.3):
         super(GAT, self).__init__()
@@ -197,6 +201,7 @@ class ExampleNodeClassification(Experiments):
     We have a MIDI dataset and want a classifier to classify each node in the input graph.
     Model allow to swap activation and experiment with GCN , GIN and GAT.
     """
+
     def __init__(
             self, epochs: int,
             batch_size: int,
@@ -251,10 +256,10 @@ class ExampleNodeClassification(Experiments):
         # if we do random split it produce different dataset,
         # at least this our current understanding how it works. :)
         # if it wrong please let me know.
+        self.is_data_split = is_data_split
         self.val_loader = None
         self.test_loader = None
-
-        if is_data_split:
+        if self.is_data_split:
             self.val_loader = DataLoader(
                 midi_dataset, batch_size=batch_size, shuffle=False)
 
@@ -376,6 +381,16 @@ class ExampleNodeClassification(Experiments):
 
         current_epoch = len(self.train_losses)
 
+        # if we do random split it out 3 dataset
+        # so, we need pass right one
+        if self.is_data_split:
+            eval_data_loader = self.val_loader
+            test_data_loader = self.test_loader
+        else:
+            # otherwise we use main data loader
+            eval_data_loader = self.train_loader
+            test_data_loader = self.train_loader
+
         for e in range(current_epoch, self._epochs + 1):
             loss_avg, train_f1, train_acc, train_recall, train_precision = self.train_epoch()
             print(
@@ -391,7 +406,8 @@ class ExampleNodeClassification(Experiments):
 
             if e % self.test_update_freq == 0:
                 test_acc, test_f1, test_precision, test_recall = self.evaluate(
-                    is_eval=False)
+                    test_data_loader, is_eval=False
+                )
 
                 print(
                     f"Epoch: {e}, "
@@ -402,8 +418,11 @@ class ExampleNodeClassification(Experiments):
                 self.update_test_metric(test_acc, test_f1, test_precision, test_recall)
 
             if e % self.eval_update_freq == 0:
-                val_acc, val_f1, val_precision, val_recall = self.evaluate(is_eval=False)
-                test_acc, test_f1, test_precision, test_recall = self.evaluate(is_eval=True)
+                val_acc, val_f1, val_precision, val_recall = self.evaluate(
+                    test_data_loader, is_eval=False)
+                test_acc, test_f1, test_precision, test_recall = self.evaluate(
+                    eval_data_loader, is_eval=True)
+                #
                 self.update_test_metric(test_acc, test_f1, test_precision, test_recall)
                 self.update_val_metric(val_acc, val_f1, val_precision, val_recall)
 
@@ -427,18 +446,14 @@ class ExampleNodeClassification(Experiments):
                 self.save_checkpoint(e, self.optimizer.state_dict(), model_name=self.model_type)
 
         print(f"Best Epoch: {best_epoch}, Test Acc: {best_test_acc:.5f}")
-        self.plot_metrics(self._epochs)
+        self.plot_metrics()
 
     @torch.no_grad()
-    def evaluate(self, is_eval: bool):
+    def evaluate(self, data_loader, is_eval: bool):
         """
         :return:
         """
         self.model.eval()
-        if is_eval:
-            data_loader = self.val_loader
-        else:
-            data_loader = self.test_loader
 
         total = 0
         correct = 0
@@ -612,12 +627,17 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--batch_size', type=int, default=2)
     parser.add_argument('--epochs', type=int, default=10)
-    parser.add_argument('--model_type', type=str, default='GAT', choices=['GCN3', 'GIN', 'GAT'])
+    parser.add_argument('--model_type', type=str, default='GCN3', choices=['GCN3', 'GIN', 'GAT'])
     parser.add_argument('--hidden_dim', type=int, default=32)
     parser.add_argument('--lr', type=float, default=0.01)
     parser.add_argument('--graph_per_instrument', type=bool, default=False)
     parser.add_argument('--wandb', action='store_true', help='Track experiment')
     parser.add_argument('--random_split', type=bool, default=False)
+    parser.add_argument('--random_drop_nodes', type=bool, default=False)
+    parser.add_argument('--midi_tolerance', type=float, default=0.5)
+
+    keys_to_move = ["x", "edge_index", "y"]
+    to_device_selective = T.ToDevice(device, attrs=keys_to_move)
 
     # init_wandb(name=f'GCN3-{args.dataset}', heads=args.heads, epochs=args.epochs,
     #            hidden_channels=args.hidden_channels, lr=args.lr, device=device)
@@ -627,6 +647,7 @@ if __name__ == '__main__':
     if args.random_split:
         transform = T.Compose([
             T.NormalizeFeatures(),
+            to_device_selective,
             T.ToDevice(device),
             T.RandomLinkSplit(
                 num_val=0.05,
@@ -637,14 +658,17 @@ if __name__ == '__main__':
         ])
     else:
         transform = T.Compose([
-            T.NormalizeFeatures(),
-            T.ToDevice(device),
+            # T.NormalizeFeatures(),
+            to_device_selective,
         ])
 
-    ds = MidiDataset('./data',
+    if args.random_drop_nodes:
+        transform.transforms.append(RandomNodeDrop(p=0.2))
+
+    ds = MidiDataset(root="./data",
                      transform=transform,
                      per_instrument_graph=args.graph_per_instrument,
-                     tolerance=0.5)
+                     tolerance=args.midi_tolerance)
 
     example_model = ExampleNodeClassification(
         epochs=args.epochs,
@@ -654,4 +678,18 @@ if __name__ == '__main__':
         model_type=args.model_type,
         lr=args.lr,
         activation=Activation.PReLU)
+
+    # loader = DataLoader(
+    #     midi_dataset, batch_size=batch_size, shuffle=False)
+    #
+    # transform = ToDevice(device)
+    # assert str(transform) == f'ToDevice({device})'
+
+    print("Total num classes", ds.num_classes)
+    print(ds[0])
+
+    # print(data)
+    # for key, value in data:
+    #     print(key, value.device)
+
     example_model.train()
