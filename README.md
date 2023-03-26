@@ -14,25 +14,34 @@ we can gain from this approach.
 * Change dir from where MIDI dataset download files. 
 * The directory is used to specify the location where all MIDI files are stored. 
 To access the MIDI files, a local web server is required since only I only
-publish free MIDI files i.e no license or commercial. 
+publish free MIDI files i.e. no license or commercial. 
 
-You can start the local web server by running the command 
-
-## Notebooks for testing.
-
-Note. I mainly use CLI, and I'm not a big fun of colab. It is tough to debug code.
-https://colab.research.google.com/drive/1GiTtZK_mnyBgfYt-TnObpjyJNuMXKJuQ?usp=sharing#scrollTo=vDHb74Zq9zWk
+You can start the local web server by running the command. This only required if building dataset.
 
 ```bash
 cd neural_graph_composer/dataset
 "python3 -m http.server 9000".
 ```
 
+## Conda
+
+conda env create --file conda-recipe.yaml
+
+## Docker 
+
+tbd
+
+## Notebooks for testing.
+
+Note. I mainly use CLI, and I'm not a big fun of colab. It is tough to debug code.
+https://colab.research.google.com/drive/1GiTtZK_mnyBgfYt-TnObpjyJNuMXKJuQ?usp=sharing#scrollTo=vDHb74Zq9zWk
+
+
 The first time you create a dataset, the MidiDataset will 
 download and construct graphs based on the MIDI files insider 
 a neural_graph_composer/dataset
 
-i.e it does this
+i.e. it does this
 ```bash
 midi_files_dir = self._default_loc
         return [f for f in os.listdir(midi_files_dir)
