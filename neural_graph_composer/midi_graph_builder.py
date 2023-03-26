@@ -535,6 +535,7 @@ class MidiGraphBuilder:
         # velocity_tensor = torch.tensor(velocity_bucket_indices).unsqueeze(1).float()
         # print("vecl vecttor", velocity_tensor)
         # print("vecl velocity_set", velocity_set)
+
         if node_attr_type == NodeAttributeType.Tensor:
             pitch_attr = torch.FloatTensor(list(pitch_set))
             velocity_attr = torch.FloatTensor(list(velocity_set)) if velocity_set is not None else None
@@ -622,11 +623,6 @@ class MidiGraphBuilder:
             raise ValueError("The flag 'is_include_velocity' must be a boolean.")
 
         data, longest_note_sequence = self.compute_data(seq, tolerance, filter_single_notes)
-        # if len(data) == 1 or len(data) == 0:
-        #     print(f"DATA {data}")
-        #     print(seq)
-        #
-        # assert len(data) > 1
 
         if not data:
             if g is None:
@@ -706,7 +702,7 @@ class MidiGraphBuilder:
                     label=new_node_hash, node_hash=new_node_hash
                 )
                 # self edge.
-                midi_graph.add_edge(last_node_hash, last_node_hash, weight=1.0)
+                midi_graph.add_edge(new_node_hash, new_node_hash, weight=1.0)
             else:
                 # if node already connected update weight
                 if midi_graph.has_edge(new_node_hash, last_node_hash):
@@ -721,7 +717,6 @@ class MidiGraphBuilder:
                     midi_graph.add_node(new_node_hash, attr=new_x, label=pitch_names, node_hash=new_node_hash)
                     midi_graph.add_edge(last_node_hash, new_node_hash, weight=1.0)
                     node_weights[new_node_hash] = {last_node_hash: 1.0}
-
             last_node_hash = new_node_hash
 
         # Update the weights of the edges in the graph
