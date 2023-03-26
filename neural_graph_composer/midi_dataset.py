@@ -2,6 +2,7 @@ import argparse
 import logging
 import os
 import os.path as osp
+import pathlib
 import shutil
 from typing import Optional, List, Dict, Callable
 from pathlib import Path
@@ -52,12 +53,12 @@ class MidiDataset(InMemoryDataset):
                  pre_filter: Optional[Callable] = None,
                  default_node_attr: str = 'attr',
                  midi_files: Optional[List[str]] = None,
-                 default_webserver: Optional[str] = 'http://localhost:9000',
+                 default_webserver: Optional[str] = "https://github.com/spyroot/neural-graph-composer/tree/main/data/processed",
                  train_ratio: Optional[float] = 0.7,
                  val_ratio: Optional[float] = 0.15,
                  per_instrument_graph: Optional[bool] = True,
                  per_graph_slit: Optional[bool] = True,
-                 default_midi_loc: str = "~/dev/neural-graph-composer/neural_graph_composer/dataset",
+                 default_midi_loc: str = "neural_graph_composer/dataset",
                  feature_vec_size: Optional[int] = 12,
                  velocity_num_buckets: Optional[int] = 8,
                  tolerance: float = 0.2,
@@ -112,12 +113,15 @@ class MidiDataset(InMemoryDataset):
         :param default_node_attr:  Default node attribute name. Name graph builder use to add node attribute
         :param per_instrument_graph:  each instrument is separate graph
         :param default_webserver:   This mainly for debug  we can poll local webserver midi files
+        :param default_midi_loc: Default location where we search for a files.
         :param train_ratio: Training ratio (default 0.7).
         :param val_ratio: Validation ratio (default 0.15).
         :param do_split_mask will create masks for test , train.
         :param per_graph_slit: will compute and include train and test mask
         :param: do_sanity_check will do some sanity check including check for
                 all node classes and inverse checks.
+        :return: 'MidiDataset'
+        :rtype: 'MidiDataset'
         """
         if not isinstance(root, str):
             raise TypeError("root must be a string.")
@@ -178,6 +182,18 @@ class MidiDataset(InMemoryDataset):
 
         self.logger = logging.getLogger(__name__ + '.' + self.__class__.__name__)
         self.logger.setLevel(logging.WARNING)
+
+        # p = pathlib.Path(root)
+        # if not p.exists() or not p.is_dir():
+        #     raise ValueError("Please indicate valid path to root directory.")
+        # we set absolute for win32
+        root = str(pathlib.Path(root).absolute())
+
+        default_loc_path = pathlib.Path(default_midi_loc)
+        if not default_loc_path.exists() or not default_loc_path.is_dir():
+            raise ValueError("Please indicate valid path where to search for a midi files.")
+
+        default_midi_loc = str(default_loc_path.absolute())
 
         # this value set if caller created
         # dataset from a list of files.
@@ -313,12 +329,6 @@ class MidiDataset(InMemoryDataset):
         :return:
         """
         return self._graph_builder
-
-    def total_num_classes(self):
-        """
-        :return: Total number of unique classes across all graphs
-        """
-        return len(self.all_classes)
 
     @property
     def raw_file_names(self):

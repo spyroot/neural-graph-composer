@@ -44,6 +44,9 @@ conda install matplotlib
 pip install librosa
 pip install torch_geometric
 pip install pretty_midi
+pip install torch_geometric
+pip install wandb
+
 
 >>> import torch
 >>> torch.cuda.is_available()
