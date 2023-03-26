@@ -3,10 +3,9 @@ Randomly drop nodes or edges.
 
 Author Mus spyroot@gmail.com
 """
+import torch
 
 from typing import Optional, Tuple
-
-import torch
 import torch_geometric.transforms as T
 from torch_geometric.data import Data
 
@@ -15,38 +14,41 @@ from torch_geometric.transforms import BaseTransform
 
 
 class GraphIDTransform(BaseTransform):
+    """
+
+    """
     def __init__(self, dataset):
         super().__init__()
         self.dataset = dataset
+        self.num_classes = dataset.num_classes
 
     def __call__(self, data):
-        graph_id = self.dataset.get_graph_id()
-        node_labels = data.y.tolist
-        print("node labels ", node_labels)
 
-# class GraphIDTransform(T.BaseTransform):
-#     def __init__(self, dataset):
-#         super().__init__()
-#         self.dataset = dataset
-#
-#     def __call__(self, data):
-#         graph_id = self.dataset.current_index
-#         node_labels = data.y.tolist()
-#         unique_labels = [graph_id * num_classes + label for label in node_labels]
-#         data.y = torch.tensor(unique_labels, dtype=torch.long)
-#         return data
+        """Transform add graph id.
+
+        It requires dataset to have public method that it can access.
+        For example what I did in my dataset.
+
+        def get_graph_id(self):
+            return self._current_index
+
+        def __getitem__(self, index):
+            self._current_index = index
+        return super().__getitem__(index)
+
+        :param data:
+        :return:
+        """
+        graph_id = self.dataset.get_graph_id()
+        data.graph_id = torch.tensor(graph_id, dtype=torch.long)
+        # new_y = torch.zeros((data.y.shape[0] + 1), dtype=torch.long)
+        # new_y[:-1] = data.y   # node labels to new tensor
+        # new_y[-1] = graph_id  # graph ID to last column
+        # data.y = new_y
+        return data
 
     def __repr__(self):
         return f'{self.__class__.__name__}()'
-
-#
-# class GraphIDTransform(T.BaseTransform):
-#     def __call__(self, data):
-#         graph_id = data.graph_id
-#         node_labels = data.y.tolist()
-#         unique_labels = [graph_id * num_classes + label for label in node_labels]
-#         data.y = torch.tensor(unique_labels, dtype=torch.long)
-#         return data
 
 
 class RandomNodeDrop(T.BaseTransform):
@@ -159,3 +161,21 @@ class RandomEdgeDrop(T.BaseTransform):
 
     def __repr__(self):
         return f'{self.__class__.__name__}(p={self.p})'
+
+
+
+
+def example_normalize(y_hash_values):
+    # unique hash values from your dataset.
+    unique_hash_values = set(y_hash_values)
+    # transform = HashToIndexTransform(unique_hash_values)
+    # x_normalized, y_index = transform(x, y_hash)  # Apply the transform to a single data point (x, y_hash).
+
+    # @property
+    # def num_classes(self):
+    #     """
+    #     :return:
+    #     """
+    #     if self.__num_classes is None:
+    #         self.__num_classes = self.calculate_num_classes()
+    #     return self.__num_classes

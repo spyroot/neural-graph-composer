@@ -695,24 +695,8 @@ class MidiDataset(InMemoryDataset):
     #     return self.data
 
     def get_graph_id(self):
-        return self.current_index
+        return self._current_index
 
     def __getitem__(self, index):
         self._current_index = index
         return super().__getitem__(index)
-
-
-def example_normalize(y_hash_values):
-    # unique hash values from your dataset.
-    unique_hash_values = set(y_hash_values)
-    # transform = HashToIndexTransform(unique_hash_values)
-    # x_normalized, y_index = transform(x, y_hash)  # Apply the transform to a single data point (x, y_hash).
-
-    # @property
-    # def num_classes(self):
-    #     """
-    #     :return:
-    #     """
-    #     if self.__num_classes is None:
-    #         self.__num_classes = self.calculate_num_classes()
-    #     return self.__num_classes
