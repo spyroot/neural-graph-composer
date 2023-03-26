@@ -1,4 +1,8 @@
 *.th
+*dataset/.DS_Store*
+.checkpoints/*
+.DS_Store/*
+*..DS_Store*
 *__pycache__*
 __pycache__/
 __.pytest_cache__/

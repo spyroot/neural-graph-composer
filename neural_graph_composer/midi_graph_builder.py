@@ -7,6 +7,7 @@ Author Mus spyroot@gmail.com
 
 """
 import logging
+import warnings
 from collections import defaultdict
 from enum import auto, Enum
 from typing import Optional, Generator, Dict, Tuple
@@ -508,12 +509,6 @@ class MidiGraphBuilder:
         :param is_include_velocity:   include velocity or not
         :return:
         """
-        print(f"feature vector size:    {feature_vec_size} "
-              f"velocity num buckets:   {velocity_num_buckets} "
-              f"node attr:              {node_attr_type} "
-              f"filter single:          {filter_single_notes} "
-              f"tolerance:              {tolerance}")
-
         if not isinstance(seq, MidiNoteSequence):
             raise TypeError(f"midi_sequences must be an instance of "
                             f"MidiNoteSequence but received {type(seq)}")
@@ -583,6 +578,11 @@ class MidiGraphBuilder:
                 self._notes_to_hash[pitch_set] = new_node_hash
                 self._hash_to_notes[new_node_hash] = pitch_set
 
+            if new_node_hash not in self.hash_to_index:
+                current_length = len(self._hash_to_notes)
+                self._hash_to_index[new_node_hash] = current_length
+                self._index_to_hash[current_length] = new_node_hash
+
             # mapping map hash to pitch name
             mapping[new_node_hash] = pitch_names
             if node_attr_type not in self.ENCODINGS:
@@ -604,18 +604,16 @@ class MidiGraphBuilder:
                 )
             else:
                 # if node already connected update weight
-                # print(f" checking connectivity {self.hash_to_notes[new_node_hash]}
-                # {self.hash_to_notes[last_node_hash]}")
                 if midi_graph.has_edge(new_node_hash, last_node_hash):
-                    # print(f" update edge {self.hash_to_notes[new_node_hash]} {self.hash_to_notes[last_node_hash]}")
+                    if 'weight' not in midi_graph[new_node_hash][last_node_hash]:
+                        warnings.warn(f"new hash {new_node_hash} has no weight to {last_node_hash}")
                     midi_graph[new_node_hash][last_node_hash]['weight'] += 1.0
-                    # node_weights[new_node_hash][last_node_hash] += 1.0
                 elif midi_graph.has_edge(last_node_hash, new_node_hash):
+                    if 'weight' not in midi_graph[last_node_hash][new_node_hash]:
+                        warnings.warn(f"{last_node_hash} has no weight to {last_node_hash}")
                     midi_graph[last_node_hash][new_node_hash]['weight'] += 1.0
-                    # node_weights[last_node_hash][new_node_hash] += 1.0
                 else:
                     midi_graph.add_node(new_node_hash, attr=new_x, label=pitch_names, node_hash=new_node_hash)
-                    # print(f" adding edge {self.hash_to_notes[new_node_hash]} {self.hash_to_notes[last_node_hash]}")
                     midi_graph.add_edge(last_node_hash, new_node_hash, weight=1.0)
                     node_weights[new_node_hash] = {last_node_hash: 1.0}
 
@@ -669,41 +667,49 @@ class MidiGraphBuilder:
         """
         return self._hash_to_notes.copy()
 
-    def graphs(self) -> Generator[PygData, None, None]:
+    def graphs(self,
+               skip_label: Optional[bool] = False,
+               is_sanity_check: Optional[bool] = False) -> Generator[PygData, None, None]:
         """Generator that yields the PygData objects for each sub-graph.
+        :param: skip_label will skip label in PygData object if you need
+        :param: is_sanity_check does a reverse check for y indices.
         :return: a generator of PygData objects for each sub-graph
         """
         if not self._hash_to_notes:
             raise ValueError("hash to notes is empty.")
 
-        # allocate idx for each hash value.
-        for node_hash in self._hash_to_notes:
-            if node_hash not in self.hash_to_index:
-                self._hash_to_index[node_hash] = self.index
-                self._index_to_hash[self.index] = node_hash
-                self.index += 1
+        # check idx for each hash value.
+        if is_sanity_check:
+            for node_hash in self._hash_to_notes:
+                assert node_hash in self.hash_to_index
 
         for g in self._pyg_data or []:
-            node_hash = [self.hash_to_index[node_hash] for node_hash in g.node_hash]
-            target_indices = [self.hash_to_index[hash_val] for hash_val in g.node_hash]
-            g.label = torch.tensor(node_hash, dtype=torch.long)
+            node_hash = [self._hash_to_index[node_hash] for node_hash in g.node_hash]
+            target_indices = [self._hash_to_index[hash_val] for hash_val in g.node_hash]
+
+            g.label = node_hash
             g.y = torch.tensor(target_indices, dtype=torch.long)
 
             # reverse sanity-check
-            original_labels = [self._index_to_hash[label.item()] for label in g.label]
-            original_target_indices = [self._index_to_hash[index] for index in target_indices]
-            original_y_values = [self._index_to_hash[y.item()] for y in g.y]
-            original_notes = [self._hash_to_notes[h] for h in original_labels]
-            for h in original_labels:
-                assert h in self._hash_to_notes, f"Note {h} is not in self.hash_to_notes."
-            for h in original_target_indices:
-                assert h in self._hash_to_notes, f"hash {hash} is not in self.hash_to_notes."
-            for h in original_y_values:
-                assert h in self._hash_to_notes, f"hash {hash} is not in self.hash_to_notes."
+            if is_sanity_check:
+                original_labels = [self._index_to_hash[label.item()] for label in g.label]
+                original_target_indices = [self._index_to_hash[index] for index in target_indices]
+                original_y_values = [self._index_to_hash[y.item()] for y in g.y]
+                original_notes = [self._hash_to_notes[h] for h in original_labels]
 
-            for note in original_notes:
-                if isinstance(note, frozenset):
-                    assert note in self._notes_to_hash, f"Note {note} is not in hash."
+                for h in original_labels:
+                    assert h in self._hash_to_notes, f"Note {h} is not in self.hash_to_notes."
+                for h in original_target_indices:
+                    assert h in self._hash_to_notes, f"hash {hash} is not in self.hash_to_notes."
+                for h in original_y_values:
+                    assert h in self._hash_to_notes, f"hash {hash} is not in self.hash_to_notes."
+
+                for note in original_notes:
+                    if isinstance(note, frozenset):
+                        assert note in self._notes_to_hash, f"Note {note} is not in hash."
+
+            if skip_label:
+                g.label = None
 
             yield g
 
@@ -716,13 +722,14 @@ class MidiGraphBuilder:
         def from_file(cls, file_path: str,
                       per_instrument: Optional[bool] = True,
                       hidden_feature_size: int = 64) -> 'MidiGraphBuilder':
-            """Constructs a MidiGraphBuilder object from a MIDI file path.
+            """Constructs a MidiGraphBuilder object from a MIDI file path.:
             :param cls:
             :param file_path: A string representing the path to the MIDI file to be processed.
             :param per_instrument: A boolean indicating whether to build a graph for each instrument in the MIDI file.
             :param hidden_feature_size: The size of the hidden feature vector to use for the PyTorch Geometric graph.
             :return: A MidiGraphBuilder object constructed from the specified MIDI file.
             :rtype: MidiGraphBuilder
+            :return 'MidiGraphBuilder'
             """
             midi_seq = MidiReader.read(file_path)
             return cls(midi_seq, per_instrument=per_instrument, hidden_feature_size=hidden_feature_size)

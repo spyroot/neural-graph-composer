@@ -39,30 +39,12 @@ class NodeHashIndexMapper:
         return self.index_to_hash[index]
 
 
-class HashToIndexTransform:
-    def __init__(self, unique_hash_values):
-        self.hash_to_index = {hash_val: idx for idx, hash_val in enumerate(unique_hash_values)}
-
-    def __call__(self, x, y_hash):
-        y_index = self.hash_to_index[y_hash]
-        x_normalized = self.normalize(x)
-        return x_normalized, y_index
-
-    def normalize(self, x):
-        # Implement your normalization method here, e.g., min-max scaling or standardization.
-        # x_normalized = ...
-        x_normalized = {}
-        return x_normalized
-
-
 class MidiDataset(InMemoryDataset):
     """Create dataset from list of MIDI files
 
-    per_graph_slit dictates if we want threat each instrument as separate graph.
-    or we want merge
-
+    per_graph_slit dictates if we want threat each instrument as separate graph
+    we want to merge each to single graph.
     """
-
     def __init__(self,
                  root,
                  transform: Optional[Callable] = None,
@@ -80,7 +62,10 @@ class MidiDataset(InMemoryDataset):
                  velocity_num_buckets: Optional[int] = 8,
                  tolerance: float = 0.2,
                  filter_single_notes: Optional[bool] = False,
-                 include_velocity: Optional[bool] = False):
+                 include_velocity: Optional[bool] = False,
+                 do_split_mask: Optional[bool] = True,
+                 remove_label: Optional[bool] = True,
+                 do_sanity_check: Optional[bool] = False):
         """Default_midi_loc used to indicate a directory where all MIDI files.
 
             Example usage offline:
@@ -129,9 +114,11 @@ class MidiDataset(InMemoryDataset):
         :param default_webserver:   This mainly for debug  we can poll local webserver midi files
         :param train_ratio: Training ratio (default 0.7).
         :param val_ratio: Validation ratio (default 0.15).
-        :param per_graph_slit: Whether to split the dataset into graphs.
+        :param do_split_mask will create masks for test , train.
+        :param per_graph_slit: will compute and include train and test mask
+        :param: do_sanity_check will do some sanity check including check for
+                all node classes and inverse checks.
         """
-
         if not isinstance(root, str):
             raise TypeError("root must be a string.")
         if transform is not None and not callable(transform):
@@ -180,7 +167,8 @@ class MidiDataset(InMemoryDataset):
             raise ValueError("val_ratio should be between 0 and 1.")
 
         if train_ratio + val_ratio > 1:
-            raise ValueError("The sum of train_ratio and val_ratio should be less than or equal to 1.")
+            raise ValueError("The sum of train_ratio and val_ratio "
+                             "should be less than or equal to 1.")
 
         if feature_vec_size is not None and (feature_vec_size < 1 or feature_vec_size > 128):
             raise ValueError("feature_vec_size must be between 1 and 128 (inclusive)")
@@ -191,13 +179,19 @@ class MidiDataset(InMemoryDataset):
         self.logger = logging.getLogger(__name__ + '.' + self.__class__.__name__)
         self.logger.setLevel(logging.WARNING)
 
+        # this value set if caller created
+        # dataset from a list of files.
         self._offline = False
 
+        # list offline files.
         self.files = []
         if midi_files is not None:
             self.files = midi_files
             self._offline = True
 
+        self._remove_label = remove_label
+        self._is_sanity_check = do_sanity_check
+        self._do_split_mask = do_split_mask
         self._default_loc = Path(default_midi_loc).expanduser().resolve()
         self.__url = default_webserver
         self.__train_ratio = train_ratio
@@ -205,6 +199,7 @@ class MidiDataset(InMemoryDataset):
         self.__is_instrument_graph = per_instrument_graph
         self.__mask_instruments = per_graph_slit
         self.__hidden_channels = 64
+        self._current_index = 0
 
         #
         self.node_attr_name = default_node_attr
@@ -465,29 +460,33 @@ class MidiDataset(InMemoryDataset):
                     is_per_instrument=True
                 )
 
-                # graph_builder output iterator
-                for midi_data in self._graph_builder.graphs():
+                # graph_builder output iterator, is_sanity_check if we want to do sanity
+                # check during this phase.
+                for midi_data in self._graph_builder.graphs(
+                        is_sanity_check=self._is_sanity_check,
+                        skip_label=self._remove_label):
                     self.all_classes.update(torch.unique(midi_data.y).tolist())
                     # first we apply pre-filter then apply mask
                     if self.pre_filter is not None and not self.pre_filter(midi_data):
                         continue
 
                     # split mask
-                    num_nodes = midi_data.x.size(0)
-                    train_ratio, val_ratio = self.__train_ratio, self.__val_ratio
-                    train_size = int(train_ratio * num_nodes)
-                    val_size = int(val_ratio * num_nodes)
+                    if self._do_split_mask:
+                        num_nodes = midi_data.x.size(0)
+                        train_ratio, val_ratio = self.__train_ratio, self.__val_ratio
+                        train_size = int(train_ratio * num_nodes)
+                        val_size = int(val_ratio * num_nodes)
 
-                    indices = np.random.permutation(num_nodes)
-                    # Assign training, validation, and testing masks
-                    midi_data.train_mask = torch.zeros(num_nodes, dtype=torch.bool)
-                    midi_data.train_mask[torch.tensor(indices[:train_size])] = True
+                        indices = np.random.permutation(num_nodes)
+                        # Assign training, validation, and testing masks
+                        midi_data.train_mask = torch.zeros(num_nodes, dtype=torch.bool)
+                        midi_data.train_mask[torch.tensor(indices[:train_size])] = True
 
-                    midi_data.val_mask = torch.zeros(num_nodes, dtype=torch.bool)
-                    midi_data.val_mask[torch.tensor(indices[train_size:train_size + val_size])] = True
+                        midi_data.val_mask = torch.zeros(num_nodes, dtype=torch.bool)
+                        midi_data.val_mask[torch.tensor(indices[train_size:train_size + val_size])] = True
 
-                    midi_data.test_mask = torch.zeros(num_nodes, dtype=torch.bool)
-                    midi_data.test_mask[torch.tensor(indices[train_size + val_size:])] = True
+                        midi_data.test_mask = torch.zeros(num_nodes, dtype=torch.bool)
+                        midi_data.test_mask[torch.tensor(indices[train_size + val_size:])] = True
 
                     if self.pre_transform is not None:
                         midi_data = self.pre_transform(midi_data)
@@ -584,6 +583,9 @@ class MidiDataset(InMemoryDataset):
                    ))
         del self.__data_list
         self.__data_list = None
+
+        # release all memory
+        del self._graph_builder
         self._graph_builder = None
 
         self.load_processed()
@@ -620,21 +622,22 @@ class MidiDataset(InMemoryDataset):
                     continue
 
                 # split mask
-                num_nodes = midi_data.x.size(0)
-                train_ratio, val_ratio = self.__train_ratio, self.__val_ratio
-                train_size = int(train_ratio * num_nodes)
-                val_size = int(val_ratio * num_nodes)
+                if self._do_split_mask:
+                    num_nodes = midi_data.x.size(0)
+                    train_ratio, val_ratio = self.__train_ratio, self.__val_ratio
+                    train_size = int(train_ratio * num_nodes)
+                    val_size = int(val_ratio * num_nodes)
 
-                indices = np.random.permutation(num_nodes)
-                # Assign training, validation, and testing masks
-                midi_data.train_mask = torch.zeros(num_nodes, dtype=torch.bool)
-                midi_data.train_mask[torch.tensor(indices[:train_size])] = True
+                    indices = np.random.permutation(num_nodes)
+                    # Assign training, validation, and testing masks
+                    midi_data.train_mask = torch.zeros(num_nodes, dtype=torch.bool)
+                    midi_data.train_mask[torch.tensor(indices[:train_size])] = True
 
-                midi_data.val_mask = torch.zeros(num_nodes, dtype=torch.bool)
-                midi_data.val_mask[torch.tensor(indices[train_size:train_size + val_size])] = True
+                    midi_data.val_mask = torch.zeros(num_nodes, dtype=torch.bool)
+                    midi_data.val_mask[torch.tensor(indices[train_size:train_size + val_size])] = True
 
-                midi_data.test_mask = torch.zeros(num_nodes, dtype=torch.bool)
-                midi_data.test_mask[torch.tensor(indices[train_size + val_size:])] = True
+                    midi_data.test_mask = torch.zeros(num_nodes, dtype=torch.bool)
+                    midi_data.test_mask[torch.tensor(indices[train_size + val_size:])] = True
 
                 if self.pre_transform is not None:
                     midi_data = self.pre_transform(midi_data)
@@ -671,6 +674,13 @@ class MidiDataset(InMemoryDataset):
 
         self.data, self.slices, _ = torch.load(osp.join(self.processed_dir, file_name))
         return self.data
+
+    def get_graph_id(self):
+        return self.current_index
+
+    def __getitem__(self, index):
+        self._current_index = index
+        return super().__getitem__(index)
 
 
 def example_normalize(y_hash_values):
