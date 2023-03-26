@@ -8,8 +8,10 @@ Author Mus spyroot@gmail.com
 """
 import io
 import logging
+import math
 import os
 import tempfile
+import warnings
 from typing import Tuple, Iterator, Optional, Union
 
 import mido
@@ -150,6 +152,10 @@ class MidiReader(MidiBaseReader):
             # for each instrument iterate over all node and get time
             seq_id = midi_seq.create_track(i, instrument.program, instrument.name, instrument.is_drum)
             for n in instrument.notes:
+                if math.isclose(n.start, n.end):
+                    warnings.warn(f"{instrument}, note duration start and end "
+                                  f"time is very close {n.start} {n.end}")
+                    continue
                 # update total time
                 if not midi_seq.total_time or n.end >= midi_seq[seq_id].total_time:
                     # update entire total for all music instruments

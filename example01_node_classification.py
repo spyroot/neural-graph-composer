@@ -259,12 +259,12 @@ class ExampleNodeClassification(Experiments):
         self.is_data_split = is_data_split
         self.val_loader = None
         self.test_loader = None
-        if self.is_data_split:
-            self.val_loader = DataLoader(
-                midi_dataset, batch_size=batch_size, shuffle=False)
 
-            self.test_loader = DataLoader(
-                midi_dataset, batch_size=batch_size, shuffle=False)
+        self.val_loader = DataLoader(
+            midi_dataset, batch_size=batch_size, shuffle=False)
+
+        self.test_loader = DataLoader(
+            midi_dataset, batch_size=batch_size, shuffle=False)
 
         self.model_type = model_type
         if model_type == "GCN3":
@@ -328,12 +328,14 @@ class ExampleNodeClassification(Experiments):
 
             if self._is_gin:
                 node_idx = torch.arange(out.shape[0]).to(self.device)
-                out_sum = torch.zeros((train_batch.num_nodes, out.shape[1]), dtype=torch.float).to(self.device)
+                out_sum = torch.zeros((train_batch.num_nodes, out.shape[1]),
+                                      dtype=torch.float).to(self.device)
                 out_sum.scatter_(0, node_idx.unsqueeze(1).expand(-1, out.shape[1]), out)
                 out_train = out_sum[train_mask]
             elif self._is_gat:
                 node_idx = torch.arange(out.shape[0]).to(self.device)
-                out_sum = torch.zeros((train_batch.num_nodes, out.shape[1]), dtype=torch.float).to(self.device)
+                out_sum = torch.zeros((train_batch.num_nodes, out.shape[1]),
+                                      dtype=torch.float).to(self.device)
                 out_sum.scatter_(0, node_idx.unsqueeze(1).expand(-1, out.shape[1]), out)
                 out_train = out_sum[train_mask, -self._num_classes:]
             else:
@@ -381,16 +383,6 @@ class ExampleNodeClassification(Experiments):
 
         current_epoch = len(self.train_losses)
 
-        # if we do random split it out 3 dataset
-        # so, we need pass right one
-        if self.is_data_split:
-            eval_data_loader = self.val_loader
-            test_data_loader = self.test_loader
-        else:
-            # otherwise we use main data loader
-            eval_data_loader = self.train_loader
-            test_data_loader = self.train_loader
-
         for e in range(current_epoch, self._epochs + 1):
             loss_avg, train_f1, train_acc, train_recall, train_precision = self.train_epoch()
             print(
@@ -406,7 +398,7 @@ class ExampleNodeClassification(Experiments):
 
             if e % self.test_update_freq == 0:
                 test_acc, test_f1, test_precision, test_recall = self.evaluate(
-                    test_data_loader, is_eval=False
+                    self.test_loader, is_eval=False
                 )
 
                 print(
@@ -419,9 +411,9 @@ class ExampleNodeClassification(Experiments):
 
             if e % self.eval_update_freq == 0:
                 val_acc, val_f1, val_precision, val_recall = self.evaluate(
-                    test_data_loader, is_eval=False)
+                    self.test_loader, is_eval=False)
                 test_acc, test_f1, test_precision, test_recall = self.evaluate(
-                    eval_data_loader, is_eval=True)
+                    self.val_loader, is_eval=True)
                 #
                 self.update_test_metric(test_acc, test_f1, test_precision, test_recall)
                 self.update_val_metric(val_acc, val_f1, val_precision, val_recall)
@@ -626,7 +618,7 @@ if __name__ == '__main__':
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     parser = argparse.ArgumentParser()
     parser.add_argument('--batch_size', type=int, default=2)
-    parser.add_argument('--epochs', type=int, default=10)
+    parser.add_argument('--epochs', type=int, default=1000)
     parser.add_argument('--model_type', type=str, default='GCN3', choices=['GCN3', 'GIN', 'GAT'])
     parser.add_argument('--hidden_dim', type=int, default=32)
     parser.add_argument('--lr', type=float, default=0.01)
@@ -635,6 +627,7 @@ if __name__ == '__main__':
     parser.add_argument('--random_split', type=bool, default=False)
     parser.add_argument('--random_drop_nodes', type=bool, default=False)
     parser.add_argument('--midi_tolerance', type=float, default=0.5)
+    args = parser.parse_args()
 
     keys_to_move = ["x", "edge_index", "y"]
     to_device_selective = T.ToDevice(device, attrs=keys_to_move)

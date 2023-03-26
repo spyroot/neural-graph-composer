@@ -102,7 +102,6 @@ class MidiNote(MidiEvent):
         :param voice:
         :param is_drum:  a drum part or not.  This can inference from MIDI program Drum
         """
-
         # Ensure that pitch is within the valid MIDI range.
         if not 0 <= pitch <= MAX_MIDI_PITCH:
             warnings.warn(
@@ -115,8 +114,10 @@ class MidiNote(MidiEvent):
                 f"Velocity value {velocity} is out of range [0, 127]. Clamping to nearest valid value.")
             velocity = max(0, min(MAX_MIDI_VELOCITY, velocity))
 
-        assert end_time > start_time, f"End time value {end_time} should be greater than start time value {start_time}"
-        assert isinstance(numerator, int) and numerator > 0, f"Numerator value {numerator} is not a valid value."
+        assert end_time > start_time, f"Instrument {instrument} End time value {end_time} " \
+                                      f"should be greater than start time value {start_time}"
+        assert isinstance(numerator, int) and numerator > 0, \
+            f"Numerator value {numerator} is not a valid value."
 
         # ensure that denominator is a power of 2.
         assert isinstance(denominator, int) and denominator > 0 and ((denominator & (denominator - 1)) == 0), \

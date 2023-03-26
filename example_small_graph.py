@@ -315,11 +315,21 @@ def different_datasets():
     print(midi_dataset[8].x)
 
 
+def read_empty_files():
+    """
+    :return:
+    """
+    midi_seqs = MidiReader.read(
+        '/Users/spyroot/dev/neural-graph-composer/data/raw/58486a_nocturne_op_55_no_1_(nc)smythe.mid')
+
+
 if __name__ == '__main__':
     """
     """
+    read_empty_files()
     print("Tolerance checker:")
     tolerance_checker()
-
     print("Dataset creation checker:")
     different_datasets()
+
+

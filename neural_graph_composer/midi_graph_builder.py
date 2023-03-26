@@ -303,6 +303,11 @@ class MidiGraphBuilder:
         total_nodes = 0
 
         for s in _midi_seq:
+            # skip all drum instruments
+            if _midi_seq[s].instrument.is_drum:
+                continue
+            if len(_midi_seq[s].notes) == 1:
+                continue
             g = self.build_sequence(
                 _midi_seq[s],
                 feature_vec_size=feature_vec_size,
@@ -528,6 +533,12 @@ class MidiGraphBuilder:
             raise ValueError("The flag 'is_include_velocity' must be a boolean.")
 
         data, longest_note_sequence = self.compute_data(seq, tolerance, filter_single_notes)
+        # if len(data) == 1 or len(data) == 0:
+        #     print(f"DATA {data}")
+        #     print(seq)
+        #
+        # assert len(data) > 1
+
         if not data:
             if g is None:
                 return nx.DiGraph()

@@ -654,6 +654,8 @@ class MidiDataset(InMemoryDataset):
 
                 self.__data_list.append(midi_data)
 
+                del midi_seqs
+
             except KeyError as ker_err:
                 print(ker_err)
                 print(f"Error in file {raw_path} error: {ker_err}")
@@ -672,18 +674,18 @@ class MidiDataset(InMemoryDataset):
         test_dataset = torch.utils.data.Subset(self, self.test_idx[:test_size])
         return train_dataset, val_dataset, test_dataset
 
-    def get(self, idx):
-        """
-        :param idx:
-        :return:
-        """
-        if self.__is_instrument_graph:
-            file_name = self.processed_file_names[0]
-        else:
-            file_name = self.processed_file_names[1]
-
-        self.data, self.slices, _ = torch.load(osp.join(self.processed_dir, file_name))
-        return self.data
+    # def get(self, idx):
+    #     """
+    #     :param idx:
+    #     :return:
+    #     """
+    #     if self.__is_instrument_graph:
+    #         file_name = self.processed_file_names[0]
+    #     else:
+    #         file_name = self.processed_file_names[1]
+    #
+    #     self.data, self.slices, _ = torch.load(osp.join(self.processed_dir, file_name))
+    #     return self.data
 
     def get_graph_id(self):
         return self.current_index
