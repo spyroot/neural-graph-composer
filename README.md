@@ -261,6 +261,31 @@ def index_to_hash():
             print(sorted_node_features, sorted_original_set_tensor)
 ```
 
+### How to build custom dataset from midi files ?
+
+```bash
+
+    raw_paths = ['data/raw/a_night_in_tunisia_2_jc.mid',
+                 'data/raw/a_night_in_tunisia_2_jc.mid']
+
+    # if caller pass list of files it will not download anything
+    # it will create dataset from a list of midi files.
+    
+    # Note for consistency all midi file will be copied 
+    # to raw first similarly as regular case but at the end 
+    # you will have your own dataset.
+    # Note2:  I always generate dataset where instrument is single graph
+    #         and second case where entire music piece is separate graph.
+    midi_dataset = MidiDataset(root="./data_test",
+                               midi_files=raw_paths,
+                               per_instrument_graph=False)
+                                 
+    train_mask = midi_dataset[0].train_mask
+    data_x = midi_dataset.data.x[train_mask]
+    data_y = midi_dataset.data.y[train_mask]
+    data_label = midi_dataset.data.label[train_mask]
+```
+
 ## Data Modeling.
 
 Graph neural networks (GNNs) have shown great promise in the field of machine learning, 
