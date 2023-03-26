@@ -7,6 +7,7 @@ from neural_graph_composer.midi.midi_sequence import MidiNoteSequence
 from neural_graph_composer.midi_dataset import MidiDataset
 from neural_graph_composer.midi_graph_builder import MidiGraphBuilder
 from neural_graph_composer.midi_reader import MidiReader
+import numpy as np
 
 
 def example_one():
@@ -323,13 +324,155 @@ def read_empty_files():
         '/Users/spyroot/dev/neural-graph-composer/data/raw/58486a_nocturne_op_55_no_1_(nc)smythe.mid')
 
 
+# def time_difference_distribution(midi_note_sequences):
+#     """
+#
+#     :param midi_note_sequences:
+#     :return:
+#     """
+#     time_differences = []
+#
+#     for seq in midi_note_sequences:
+#         start_times = sorted([n.start_time for n in seq.notes if not n.is_drum and n.velocity != 0])
+#         differences = np.diff(start_times)
+#         time_differences.extend(differences)
+#
+#     return np.array(time_differences)
+
+# Example usage:
+# midi_note_sequences = [...]  # List of MidiNoteSequence
+# time_differences = time_difference_distribution(midi_note_sequences)
+#
+# # Calculate percentiles to choose a suitable tolerance value
+# tolerance_90th_percentile = np.percentile(time_differences, 90)
+# tolerance_95th_percentile = np.percentile(time_differences, 95)
+# tolerance_99th_percentile = np.percentile(time_differences, 99)
+#
+# print("90th percentile:", tolerance_90th_percentile)
+# print("95th percentile:", tolerance_95th_percentile)
+# print("99th percentile:", tolerance_99th_percentile)
+
+
+import numpy as np
+
+
+def rescale_velocities(velocities, target_min_velocity=64, target_max_velocity=127):
+    velocities = np.array(velocities)
+
+    # Calculate the current min and max velocities
+    current_min_velocity = np.min(velocities)
+    current_max_velocity = np.max(velocities)
+
+    # Rescale the velocities to the target range
+    rescaled_velocities = ((velocities - current_min_velocity) * (target_max_velocity - target_min_velocity) / (
+                current_max_velocity - current_min_velocity)) + target_min_velocity
+
+    # Clip the rescaled velocities to the valid MIDI range (
+
+
+def rescale_velocities(velocities, target_min_velocity=64, target_max_velocity=127):
+    velocities = np.array(velocities)
+
+    # Calculate the current min and max velocities
+    current_min_velocity = np.min(velocities)
+    current_max_velocity = np.max(velocities)
+
+    # Rescale the velocities to the target range
+    rescaled_velocities = ((velocities - current_min_velocity) * (target_max_velocity - target_min_velocity) / (
+                current_max_velocity - current_min_velocity)) + target_min_velocity
+
+    # Clip the rescaled velocities to the valid MIDI range (0 to 127)
+    clipped_velocities = np.clip(rescaled_velocities, 0, 127).astype(int)
+
+    return clipped_velocities.tolist()
+
+
+# Example usage:
+velocities = [20, 26, 23, 20, 40, 20, 60, 20, 30, 20, 20, 30]
+rescaled_velocities = rescale_velocities(velocities)
+print(rescaled_velocities)
+
+
+def scale_relative_velocities(velocities, scaling_factor=1.0):
+    """
+
+    :param velocities:
+    :param scaling_factor:
+    :return:
+    """
+    velocities = np.array(velocities)
+
+    # Calculate the average velocity
+    avg_velocity = np.mean(velocities)
+    print(avg_velocity)
+
+    # Calculate the ratio between each note's velocity and the average velocity
+    velocity_ratios = velocities / avg_velocity
+    print(velocity_ratios)
+    # Scale the velocities using the scaling factor
+    scaled_velocities = velocity_ratios * scaling_factor * avg_velocity
+    print(scaled_velocities)
+    # Clip the scaled velocities to the valid MIDI range (0 to 127)
+    clipped_velocities = np.clip(scaled_velocities, 0, 127).astype(int)
+
+    return clipped_velocities.tolist()
+
+
+def instrument_time_differences(midi_note_sequence):
+    start_times = sorted([n.start_time for n in midi_note_sequence.notes
+                          if not midi_note_sequence.instrument.is_drum])
+    differences = np.diff(start_times)
+    return differences
+
+
 if __name__ == '__main__':
     """
     """
-    read_empty_files()
-    print("Tolerance checker:")
-    tolerance_checker()
-    print("Dataset creation checker:")
-    different_datasets()
+    # read_empty_files()
+    # print("Tolerance checker:")
+    # tolerance_checker()
+    # print("Dataset creation checker:")
+    # different_datasets()
+
+    midi_seqs = MidiReader.read(
+        'data/raw/a_night_in_tunisia_2_jc.mid')
+
+    # time_differences = []
+    #
+    # for seq in midi_seqs:
+    #     print(midi_seqs[seq].notes)
+    #     start_times = sorted([n.start_time for n in midi_seqs[seq].notes
+    #                           if not midi_seqs[seq].instrument.is_drum])
+    #     differences = np.diff(start_times)
+    #     time_differences.extend(differences)
+    #
+    # time_differences = np.array(time_differences)
+    # tolerance_95th_percentile = np.percentile(time_differences, 95)
+    # print(tolerance_95th_percentile)
+
+    tolerance_values = []
+
+    for seq in midi_seqs:
+        time_differences = instrument_time_differences(midi_seqs[seq])
+        if len(time_differences) > 0:
+            tolerance_95th_percentile = np.percentile(time_differences, 95)
+            tolerance_values.append(tolerance_95th_percentile)
+            print(f"Instrument {seq}: 95th percentile tolerance = {tolerance_95th_percentile}")
+
+    # You can also calculate the average tolerance across all instruments
+    average_tolerance = np.mean(tolerance_values)
+    print(f"Average tolerance across all instruments: {average_tolerance}")
+
+    for seq in midi_seqs:
+        if midi_seqs[seq].instrument.is_drum:
+            continue
+        s = midi_seqs[seq]
+        for n in s.notes:
+            # print(f"Using tollerance {tolerance_values[seq]}")
+            # t = round(round(n.start_time / float(tolerance_values[seq])) * float(tolerance_values[seq]), 3)
+            t = round(round(n.start_time / float(tolerance_values[seq])) * float(tolerance_values[seq]), 3)
+            print(f"{s.instrument.name} start {n.pitch_name} time {n.start_time} {t} round: {round(n.start_time, 3)}")
 
 
+# scaled_velocities = scale_relative_velocities(velocities, scaling_factor)
+# print(scaled_velocities)

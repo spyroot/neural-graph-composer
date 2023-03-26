@@ -15,6 +15,7 @@ from typing import Union, List, Any
 
 import librosa
 import networkx as nx
+import numpy as np
 import torch
 from torch import Tensor
 from torch_geometric.data import Data
@@ -368,20 +369,109 @@ class MidiGraphBuilder:
         return abs(n.start_time - n.start_time) < tolerance
 
     @staticmethod
+    def instrument_time_differences(midi_seq: MidiNoteSequence):
+        """Compute difference in start time.
+        :param midi_seq: MidiNoteSequence
+        :return: return
+        """
+        start_times = sorted([n.start_time for n in midi_seq.notes
+                              if not midi_seq.instrument.is_drum and len(midi_seq.notes) > 0])
+        return np.diff(start_times)
+
+    @staticmethod
+    def rescale_velocities(velocities, target_min_velocity=32, target_max_velocity=127):
+        """Rescale velocity in range 64 to 127.
+        # Example usage:
+            velocities = [20, 26, 23, 20, 40, 20, 60, 20, 30, 20, 20, 30]
+            rescaled_velocities = rescale_velocities(velocities)
+            print(rescaled_velocities)
+
+        :param velocities:
+        :param target_min_velocity:
+        :param target_max_velocity:
+        :return:
+        """
+        velocities = np.array(velocities)
+        # current min and max velocities
+        current_min_velocity = np.min(velocities)
+        current_max_velocity = np.max(velocities)
+
+        # rescale the velocities to the target range
+        rescaled_velocities = ((velocities - current_min_velocity) * (target_max_velocity - target_min_velocity) / (
+                current_max_velocity - current_min_velocity)) + target_min_velocity
+
+        # clip the rescaled velocities to the valid MIDI range (0 to 127)
+        clipped_velocities = np.clip(rescaled_velocities, 0, 127).astype(int)
+        return clipped_velocities.tolist()
+
+    @staticmethod
+    def scale_relative_velocities(velocities, scaling_factor=1.0):
+        """Rescale velocity  This specifically for some classical piece
+        where velocity very low.
+
+        # Example usage:
+            velocities = [20, 26, 23, 20, 40, 20, 60, 20, 30, 20, 20, 30]
+            rescaled_velocities = rescale_velocities(velocities)
+            print(rescaled_velocities)
+
+        :param velocities:
+        :param scaling_factor:
+        :return:
+        """
+        velocities = np.array(velocities)
+        # the average velocity
+        avg_velocity = np.mean(velocities)
+        # the ratio between each note's velocity and the average velocity
+        velocity_ratios = velocities / avg_velocity
+        # scale the velocities using the scaling factor
+        scaled_velocities = velocity_ratios * scaling_factor * avg_velocity
+        # clip
+        clipped_velocities = np.clip(scaled_velocities, 0, 127).astype(int)
+
+        return clipped_velocities.tolist()
+
+    @staticmethod
+    def compute_tolerance(midi_seq: MidiNoteSequence, percentile: Optional[int] = 95):
+        """Compute percentile time difference.
+        :param midi_seq:
+        :param percentile:
+        :return:
+        """
+        time_differences = MidiGraphBuilder.instrument_time_differences(midi_seq)
+        if len(time_differences) > 0:
+            tolerance_95th_percentile = np.percentile(time_differences, percentile)
+            return tolerance_95th_percentile
+
+    @staticmethod
     def compute_data(seq: MidiNoteSequence,
                      tolerance: float,
-                     filter_single_notes: bool) -> Tuple[Dict[float, List[MidiNote]], int]:
-        """Compute the dictionary 'data', which maps start times to lists
+                     filter_single_notes: bool,
+                     tolerance_auto: Optional[bool] = False) -> Tuple[Dict[float, List[MidiNote]], int]:
+        """
+        Compute the dictionary 'data', which maps start times to lists
         of notes for a given MidiNoteSequence, and compute the length of the longest
         sequence of notes played at the same time.
+        :param seq:  MidiNoteSequence a midi sequence for particular instrument.
+        :param tolerance: fixed tolerance
+        :param filter_single_notes:  will filter single notes from seq.
+        :param tolerance_auto:  will compute tolerance for indirection in time.
+        :return:
         """
+        if tolerance_auto:
+            tolerance = MidiGraphBuilder.compute_tolerance(seq)
+            tolerance = float(tolerance)
+
         data = {}
         longest_note_sequence = 0
         for n in seq.notes:
             # all drum are skipped, we only care about instrument that produce harmony
             if n.is_drum or n.velocity == 0:
                 continue
-            time_hash = round(n.start_time / tolerance) * tolerance
+            if tolerance:
+                time_hash = round(round(n.start_time / tolerance) * tolerance)
+            else:
+                time_hash = round(n.start_time / tolerance) * tolerance
+
             if time_hash not in data:
                 data[time_hash] = []
 
@@ -399,7 +489,7 @@ class MidiGraphBuilder:
     def create_tensor(
             node_attr_type: NodeAttributeType,
             pitch_set,
-            velocity_set: Optional[Union[set, frozenset]] = None,
+            velocity_set: Optional[Union[set, frozenset, list]] = None,
             feature_vec_size: Optional[int] = 12,
             num_classes: Optional[int] = None,
             velocity_num_buckets: Optional[int] = 8) -> torch.Tensor:
@@ -445,7 +535,6 @@ class MidiGraphBuilder:
         # velocity_tensor = torch.tensor(velocity_bucket_indices).unsqueeze(1).float()
         # print("vecl vecttor", velocity_tensor)
         # print("vecl velocity_set", velocity_set)
-
         if node_attr_type == NodeAttributeType.Tensor:
             pitch_attr = torch.FloatTensor(list(pitch_set))
             velocity_attr = torch.FloatTensor(list(velocity_set)) if velocity_set is not None else None
@@ -578,7 +667,10 @@ class MidiGraphBuilder:
             pitch_set = frozenset(n.pitch for n in notes)
             velocity_set = None
             if is_include_velocity:
-                velocity_set = frozenset(n.velocity // velocity_num_buckets for n in notes)
+                velocity = [n.velocity for n in notes]
+                velocity = MidiGraphBuilder.rescale_velocities(velocity)
+                # velocity_set = frozenset(n.velocity // velocity_num_buckets for n in notes)
+
             pitch_names = frozenset(librosa.midi_to_note(n.pitch) for n in notes)
 
             # a hash of set is node  {C0, F0, E0} respected MIDI num {x,y,z} form a hash
@@ -602,7 +694,7 @@ class MidiGraphBuilder:
             new_x = self.create_tensor(
                 node_attr_type,
                 pitch_set,
-                velocity_set=velocity_set,
+                velocity_set=velocity,
                 feature_vec_size=feature_vec_size,
                 num_classes=127,
                 velocity_num_buckets=velocity_num_buckets
@@ -613,6 +705,8 @@ class MidiGraphBuilder:
                     new_node_hash, attr=new_x,
                     label=new_node_hash, node_hash=new_node_hash
                 )
+                # self edge.
+                midi_graph.add_edge(last_node_hash, last_node_hash, weight=1.0)
             else:
                 # if node already connected update weight
                 if midi_graph.has_edge(new_node_hash, last_node_hash):
