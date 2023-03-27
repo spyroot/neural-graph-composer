@@ -109,6 +109,7 @@ class GCN3(torch.nn.Module):
             self, num_feature: int,
             hidden_channels: int,
             num_classes: int,
+            num_graphs: int,
             activation: Optional[Activation] = Activation.ReLU,
             dropout_p: float = 0.5):
         super(GCN3, self).__init__()
@@ -124,13 +125,14 @@ class GCN3(torch.nn.Module):
         elif activation == Activation.Tanh:
             self.activation = nn.Tanh()
 
+        print(f"  GCN Conv {num_feature}")
         self.conv1 = GCNConv(num_feature, hidden_channels)
         self.prelu01 = nn.PReLU(hidden_channels)
         self.conv2 = GCNConv(hidden_channels, hidden_channels)
         self.prelu02 = nn.PReLU(hidden_channels)
         self.conv3 = GCNConv(hidden_channels, hidden_channels)
 
-        self.graph_fc = nn.Linear(hidden_channels, 1466)
+        self.graph_fc = nn.Linear(hidden_channels, num_graphs)
         self.classifier = nn.Linear(hidden_channels, num_classes)
 
         # self.prelu02 = nn.PReLU(hidden_channels)
@@ -138,7 +140,15 @@ class GCN3(torch.nn.Module):
         self.dropout_p = dropout_p
 
     def forward(self, data):
+        """
+
+        :param data:
+        :return:
+        """
         x, edge_index, batch = data.x, data.edge_index, data.batch
+        batch_size, num_node_features, num_features_per_node = x.shape
+
+        x = x.reshape(batch_size, -1)  # Reshape input tensor
         x = self.conv1(x, edge_index)
         x = self.activation(x)
         x = F.dropout(x, p=self.dropout_p, training=self.training)
@@ -302,8 +312,9 @@ class ExampleNodeClassification(Experiments):
                   f"{self._num_classes} batch size {self._batch_size} "
                   f"lr {self._lr} activate {activation.value}")
             self.model = GCN3(
-                self._feature_dim, self._hidden_dim,
-                self._num_classes, activation=activation).to(self.device)
+                self._feature_dim * 2, self._hidden_dim,
+                self._num_classes, len(midi_dataset),
+                activation=activation).to(self.device)
         elif model_type == "GAT":
             print(f"Creating GAT feature dim: {self._feature_dim} "
                   f"hidden size {self._hidden_dim} num classes "
@@ -378,7 +389,11 @@ class ExampleNodeClassification(Experiments):
             loss_graph_loss = self.loss_fn(selected_logits, graph_ids)
 
             # print(f"Graph loss {loss_graph_loss}")
-            loss = F.nll_loss(out_train, y_true)
+            # print(f"out_train {out_train.shape} {y_true.shape}")
+            # loss = F.nll_loss(out_train, y_true)
+
+            loss = self.loss_fn(out_train, y_true)
+
             combine_loss = loss_graph_loss + loss
             combine_loss.backward()
             self.optimizer.step()
@@ -535,6 +550,11 @@ class ExampleNodeClassification(Experiments):
                 print(f"Graph prediction {graph_accuracy}")
 
             y_masked = batch.y[mask]
+
+            # pred = model(graph).argmax(dim=1)
+            # correct = (pred[mask] == graph.y[mask]).sum()
+            # acc = int(correct) / int(mask.sum())
+
             pred_class_idx = torch.argmax(pred_masked, dim=1)
             batch_correct = torch.sum(torch.eq(pred_class_idx, y_masked)).item()
             correct += batch_correct
@@ -668,7 +688,7 @@ if __name__ == '__main__':
     parser.add_argument('--batch_size', type=int, default=2)
     parser.add_argument('--epochs', type=int, default=1000)
     parser.add_argument('--model_type', type=str, default='GCN3', choices=['GCN3', 'GIN', 'GAT'])
-    parser.add_argument('--hidden_dim', type=int, default=32)
+    parser.add_argument('--hidden_dim', type=int, default=64)
     parser.add_argument('--lr', type=float, default=0.01)
     parser.add_argument('--graph_per_instrument', type=bool, default=False)
     parser.add_argument('--wandb', action='store_true', help='Track experiment')
@@ -709,8 +729,9 @@ if __name__ == '__main__':
     ds = MidiDataset(root="./data",
                      transform=transform,
                      per_instrument_graph=args.graph_per_instrument,
-                     tolerance=args.midi_tolerance)
-    print(len(ds))
+                     tolerance=args.midi_tolerance,
+                     include_velocity=True)
+    print(ds[0].x[0])
 
     transform.transforms.insert(0, GraphIDTransform(ds))
 
@@ -724,6 +745,9 @@ if __name__ == '__main__':
         model_type=args.model_type,
         lr=args.lr,
         activation=Activation.PReLU)
+
+    print(len(ds))
+
     #
     # # loader = DataLoader(
     # #     midi_dataset, batch_size=batch_size, shuffle=False)

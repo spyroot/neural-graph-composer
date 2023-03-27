@@ -6,7 +6,9 @@ Author Mus spyroot@gmail.com
            mbayramo@stanford.edu
 
 """
+import itertools
 import logging
+import math
 import warnings
 from collections import defaultdict
 from enum import auto, Enum
@@ -255,6 +257,35 @@ class MidiGraphBuilder:
         hash_of_v = hash(frozenset(v))
         return midi_graph.get_edge_data(hash_of_u, hash_of_v)
 
+    @staticmethod
+    def connect_instruments(large_graph: nx.Graph, midi_seqs: MidiNoteSequences):
+        """Unused we need experiment to connect graph on pseudo node
+        :param midi_seqs:
+        :return:
+        """
+        # Create a mapping from pitch to nodes in the graph
+        pitch_to_nodes = {}
+        for node in large_graph.nodes:
+            pitch = large_graph.nodes[node]["label"]
+            if pitch not in pitch_to_nodes:
+                pitch_to_nodes[pitch] = []
+            pitch_to_nodes[pitch].append(node)
+
+        # Iterate over all nodes in the graph
+        for node in large_graph.nodes:
+            # check if the node belongs to a different instrument than its neighbors
+            neighbors = list(large_graph.neighbors(node))
+            if not neighbors:
+                continue
+            instrument = midi_seqs[neighbors[0]].instrument.program
+            for neighbor in neighbors:
+                if midi_seqs[neighbor].instrument.program != instrument:
+                    pitch = large_graph.nodes[node]["label"]
+                    for neighbor_node in pitch_to_nodes[pitch]:
+                        if neighbor_node != node:
+                            large_graph.add_edge(node, neighbor_node, weight=1.0)
+                    break
+
     def build(self,
               midi_seqs: Optional[MidiNoteSequences] = None,
               default_trim_time: Optional[int] = 3,
@@ -392,6 +423,14 @@ class MidiGraphBuilder:
         :return:
         """
         velocities = np.array(velocities)
+
+        if len(velocities) == 1:
+            rescaled_velocity = np.clip(
+                np.round(velocities * (target_max_velocity - target_min_velocity) / 127 + target_min_velocity),
+                target_min_velocity, target_max_velocity
+            )[0]
+            return [rescaled_velocity]
+
         # current min and max velocities
         current_min_velocity = np.min(velocities)
         current_max_velocity = np.max(velocities)
@@ -441,25 +480,32 @@ class MidiGraphBuilder:
         if len(time_differences) > 0:
             tolerance_95th_percentile = np.percentile(time_differences, percentile)
             return tolerance_95th_percentile
+        else:
+            return 0.0
 
     @staticmethod
     def compute_data(seq: MidiNoteSequence,
                      tolerance: float,
                      filter_single_notes: bool,
-                     tolerance_auto: Optional[bool] = False) -> Tuple[Dict[float, List[MidiNote]], int]:
-        """
-        Compute the dictionary 'data', which maps start times to lists
-        of notes for a given MidiNoteSequence, and compute the length of the longest
-        sequence of notes played at the same time.
+                     tolerance_auto: Optional[bool] = False,
+                     precision: Optional[int] = 2) -> Tuple[Dict[float, List[MidiNote]], int]:
+        """Compute the dictionary 'data', which maps start times to lists of notes for a given
+        MidiNoteSequence, and compute the length of the longest sequence
+        of notes played at the same time.
+
+        :param precision:
         :param seq:  MidiNoteSequence a midi sequence for particular instrument.
         :param tolerance: fixed tolerance
         :param filter_single_notes:  will filter single notes from seq.
         :param tolerance_auto:  will compute tolerance for indirection in time.
         :return:
         """
+        # compute tolerance based on percentile.
         if tolerance_auto:
             tolerance = MidiGraphBuilder.compute_tolerance(seq)
             tolerance = float(tolerance)
+
+        # sorted_notes = sorted(seq.notes, key=lambda n: n.start_time)
 
         data = {}
         longest_note_sequence = 0
@@ -467,11 +513,15 @@ class MidiGraphBuilder:
             # all drum are skipped, we only care about instrument that produce harmony
             if n.is_drum or n.velocity == 0:
                 continue
-            if tolerance:
-                time_hash = round(round(n.start_time / tolerance) * tolerance)
-            else:
-                time_hash = round(n.start_time / tolerance) * tolerance
 
+            if tolerance == 0.0:
+                adjusted_time_hash = n.start_time
+            elif tolerance_auto and math.isfinite(tolerance):
+                adjusted_time_hash = round(round(n.start_time / tolerance) * tolerance, precision)
+            else:
+                adjusted_time_hash = round(n.start_time / tolerance, precision) * tolerance
+
+            time_hash = hash(adjusted_time_hash)
             if time_hash not in data:
                 data[time_hash] = []
 
@@ -538,7 +588,9 @@ class MidiGraphBuilder:
 
         if node_attr_type == NodeAttributeType.Tensor:
             pitch_attr = torch.FloatTensor(list(pitch_set))
-            velocity_attr = torch.FloatTensor(list(velocity_set)) if velocity_set is not None else None
+            velocity_attr = torch.FloatTensor(velocity_set) if velocity_set is not None and not np.isscalar(
+                velocity_set) else None
+
             if pitch_attr.shape[0] > feature_vec_size:
                 pitch_attr = pitch_attr[:feature_vec_size]
             if velocity_set is not None:
@@ -583,8 +635,60 @@ class MidiGraphBuilder:
             g: Optional[nx.DiGraph] = None) -> nx.DiGraph:
 
         """Build a graph for single midi sequence for particular instrument.
-        If we need merge all instrument to a single graph, caller
-        need use build method that will merge all graph to a single large graph.
+
+        If we need to merge all instruments into a single graph, the caller should
+        use the `build` method which will merge all graphs to a single large graph.
+
+        - First, we sort all notes based on start time and build a group.
+        - A group is a `frozenset`, so no pitch value has duplicates.
+        - We use all 12 octave.
+        - We have two options for how we compute tolerance:
+            - The first option is to use a fixed size tolerance.
+              This option might not produce good results for all cases since it
+              may group notes that are not meant to be played at the same time, such as notes played
+             one after another that do not form a chord.
+
+           - The second option is to compute tolerance based on percentile.
+             We estimate the percentile and use this as tolerance, so if two
+             notes should be played at the same time (perfectly, not human time), we fix the error
+            and have a good representation of chords vs notes that are separate sequences of notes.
+
+           - A group might be larger than the feature vector size, especially for
+             classical pieces with notes played very tightly in time.
+             We split groups into subgroups.
+           - After we compute a group, we fix the velocity for each note.
+
+            - The number of velocities must correspond to the number of notes in the group (set).
+
+            - If in the original group we had two notes with the same pitch value, e.g. C0 and C0, after
+             we set them, become just one note, hence we choose the maximum velocity.
+
+            - In many pieces, especially classical music, velocity is a very important factor
+            that captures nuances, but in many MIDI files, values are in the range 20-30,
+            hence we rescale all values so that the lower bound is 32 and the upper bound is 127.
+
+            - For each subgroup (which in most cases is just one set of 12 notes),
+            we compute a feature vector consisting of pitch values [56, 60, ...] and the respective velocity vector.
+
+            - We compute a hash for a node. A node hash is `HASH(PITCH_GROUP)`.
+
+            - If the new hash is not yet in graph G, we add it to the graph and add a
+              self-edge with weight 1.
+
+            - If the hash is already in the graph, we increment the self-weight by 1
+             (i.e. capture importance to self).
+
+            - We add an edge from the node before the current node to the current node.
+             This captures the transition from note to note or chord to chord.
+
+            - If A and B are already connected, we increment their weight to capture importance.
+
+            - In all edge cases, the method always returns a graph. If there are no notes,
+             it will return an empty graph so that the upper-layer method can use an iterator structure.
+
+        For example, right now the `build` method could technically be linked to the `graph`
+        method and emit a graph by graph, so it would build and emit a generator, so we wouldn't
+        need to store an internal representation in a list. This would save memory.
 
         :param seq: note seq object that store information about note seq.
         :param feature_vec_size: dictate a feature vector size.
@@ -622,7 +726,8 @@ class MidiGraphBuilder:
         if is_include_velocity is not None and not isinstance(is_include_velocity, bool):
             raise ValueError("The flag 'is_include_velocity' must be a boolean.")
 
-        data, longest_note_sequence = self.compute_data(seq, tolerance, filter_single_notes)
+        data, longest_note_sequence = self.compute_data(
+            seq, tolerance, filter_single_notes, tolerance_auto=True)
 
         if not data:
             if g is None:
@@ -660,75 +765,94 @@ class MidiGraphBuilder:
             notes = data[k]
 
             # a pitch a set of pitches and velocity for each pitch
-            pitch_set = frozenset(n.pitch for n in notes)
-            velocity_set = None
-            if is_include_velocity:
-                velocity = [n.velocity for n in notes]
-                velocity = MidiGraphBuilder.rescale_velocities(velocity)
-                # velocity_set = frozenset(n.velocity // velocity_num_buckets for n in notes)
-
-            pitch_names = frozenset(librosa.midi_to_note(n.pitch) for n in notes)
-
-            # a hash of set is node  {C0, F0, E0} respected MIDI num {x,y,z} form a hash
-            new_node_hash = hash(pitch_set)
-            # we add hash for a given pitch_set to dict,
-            # so we can recover if we need 2
-            if new_node_hash not in self._notes_to_hash:
-                self._notes_to_hash[pitch_set] = new_node_hash
-                self._hash_to_notes[new_node_hash] = pitch_set
-
-            if new_node_hash not in self.hash_to_index:
-                current_length = len(self._hash_to_notes)
-                self._hash_to_index[new_node_hash] = current_length
-                self._index_to_hash[current_length] = new_node_hash
-
-            # mapping map hash to pitch name
-            mapping[new_node_hash] = pitch_names
-            if node_attr_type not in self.ENCODINGS:
-                raise ValueError("Unknown encoder type")
-
-            new_x = self.create_tensor(
-                node_attr_type,
-                pitch_set,
-                velocity_set=velocity,
-                feature_vec_size=feature_vec_size,
-                num_classes=127,
-                velocity_num_buckets=velocity_num_buckets
-            )
-
-            if last_node_hash is None:
-                midi_graph.add_node(
-                    new_node_hash, attr=new_x,
-                    label=new_node_hash, node_hash=new_node_hash
-                )
-                # self edge.
-                midi_graph.add_edge(new_node_hash, new_node_hash, weight=1.0)
+            # 1033w_hungarian_rhapsody_12_(nc)smythe.mid is good example.
+            # feature vector even with very tight timing we get 18-20 notes.
+            pitch_group = frozenset(n.pitch for n in notes)
+            pitch_sliced = []
+            if len(pitch_group) > feature_vec_size:
+                pitch_iter = iter(pitch_group)
+                while True:
+                    slice_iter = itertools.islice(pitch_iter, feature_vec_size)
+                    slice_items = list(slice_iter)
+                    if not slice_items:
+                        break
+                    pitch_sliced.append(frozenset(slice_items))
             else:
-                # if node already connected update weight
-                if midi_graph.has_edge(new_node_hash, last_node_hash):
-                    if 'weight' not in midi_graph[new_node_hash][last_node_hash]:
-                        warnings.warn(f"new hash {new_node_hash} has no weight to {last_node_hash}")
-                    midi_graph[new_node_hash][last_node_hash]['weight'] += 1.0
-                elif midi_graph.has_edge(last_node_hash, new_node_hash):
-                    if 'weight' not in midi_graph[last_node_hash][new_node_hash]:
-                        warnings.warn(f"{last_node_hash} has no weight to {last_node_hash}")
-                    midi_graph[last_node_hash][new_node_hash]['weight'] += 1.0
+                pitch_sliced = [pitch_group]
+
+            for pitch_sub_group in pitch_sliced:
+                velocity = None
+                # compute velocity for each group.
+                #   note each group reduce so number of velocity might be >
+                #   is larger than all subgroup since we group based on set.
+                if is_include_velocity:
+                    max_velocity = {}
+                    for n in notes:
+                        if n.pitch not in pitch_sub_group:
+                            continue
+                        if n.pitch not in max_velocity:
+                            max_velocity[n.pitch] = n.velocity
+                        else:
+                            max_velocity[n.pitch] = max(max_velocity[n.pitch], n.velocity)
+                    velocity = [max_velocity[p] for p in pitch_sub_group]
+                    velocity = MidiGraphBuilder.rescale_velocities(velocity)
+
+                pitch_names = frozenset(librosa.midi_to_note(n.pitch) for n in notes)
+                # a hash of set is node  {C0, F0, E0} respected MIDI num {x,y,z} form a hash
+                # we compute hash if group > feature_size we do for each group.
+                new_node_hash = hash(pitch_sub_group)
+                # we add hash for a given pitch_set to dict,
+                # so we can recover if we need 2
+                if new_node_hash not in self._notes_to_hash:
+                    self._notes_to_hash[pitch_sub_group] = new_node_hash
+                    self._hash_to_notes[new_node_hash] = pitch_sub_group
+
+                if new_node_hash not in self.hash_to_index:
+                    current_length = len(self._hash_to_notes)
+                    self._hash_to_index[new_node_hash] = current_length
+                    self._index_to_hash[current_length] = new_node_hash
+
+                # mapping map hash to pitch name
+                mapping[new_node_hash] = pitch_names
+                if node_attr_type not in self.ENCODINGS:
+                    raise ValueError("Unknown encoder type")
+
+                new_x = self.create_tensor(
+                    node_attr_type,
+                    pitch_sub_group,
+                    velocity_set=velocity,
+                    feature_vec_size=feature_vec_size,
+                    num_classes=127,
+                    velocity_num_buckets=velocity_num_buckets
+                )
+
+                if last_node_hash is None:
+                    midi_graph.add_node(
+                        new_node_hash, attr=new_x,
+                        label=new_node_hash, node_hash=new_node_hash
+                    )
+                    # self edge.
+                    midi_graph.add_edge(new_node_hash, new_node_hash, weight=1.0)
                 else:
-                    midi_graph.add_node(new_node_hash, attr=new_x, label=pitch_names, node_hash=new_node_hash)
-                    midi_graph.add_edge(last_node_hash, new_node_hash, weight=1.0)
-                    node_weights[new_node_hash] = {last_node_hash: 1.0}
-            last_node_hash = new_node_hash
+                    # if node already connected update weight
+                    if midi_graph.has_edge(new_node_hash, last_node_hash):
+                        if 'weight' not in midi_graph[new_node_hash][last_node_hash]:
+                            warnings.warn(f"new hash {new_node_hash} has no weight to {last_node_hash}")
+                        midi_graph[new_node_hash][last_node_hash]['weight'] += 1.0
+                    elif midi_graph.has_edge(last_node_hash, new_node_hash):
+                        if 'weight' not in midi_graph[last_node_hash][new_node_hash]:
+                            warnings.warn(f"{last_node_hash} has no weight to {last_node_hash}")
+                        midi_graph[last_node_hash][new_node_hash]['weight'] += 1.0
+                    else:
+                        midi_graph.add_node(new_node_hash, attr=new_x, label=pitch_names, node_hash=new_node_hash)
+                        midi_graph.add_edge(last_node_hash, new_node_hash, weight=1.0)
+                        node_weights[new_node_hash] = {last_node_hash: 1.0}
+                last_node_hash = new_node_hash
 
-        # Update the weights of the edges in the graph
-        # node_hashes = list(self._notes_to_hash.values())
-        # node_weights = {u: {v: 0 for v in node_hashes} for u in node_hashes}
-
-        # Set the node attributes based on the chosen encoder
         if node_attr_type == NodeAttributeType.OneHotTensor:
             for node in midi_graph.nodes:
                 midi_graph.nodes[node]["attr"] = midi_graph.nodes[node]["attr"]
 
-        # midi_graph = nx.relabel_nodes(midi_graph, mapping)
         return midi_graph
 
     @property
@@ -771,6 +895,7 @@ class MidiGraphBuilder:
                skip_label: Optional[bool] = False,
                is_sanity_check: Optional[bool] = False) -> Generator[PygData, None, None]:
         """Generator that yields the PygData objects for each sub-graph.
+
         :param: skip_label will skip label in PygData object if you need
         :param: is_sanity_check does a reverse check for y indices.
         :return: a generator of PygData objects for each sub-graph
@@ -812,6 +937,7 @@ class MidiGraphBuilder:
                 g.label = None
 
             yield g
+            del g
 
             del self._pyg_data[:]
             del self._sub_graphs[:]

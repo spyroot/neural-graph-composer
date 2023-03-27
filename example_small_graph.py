@@ -435,7 +435,7 @@ if __name__ == '__main__':
     # different_datasets()
 
     midi_seqs = MidiReader.read(
-        'data/raw/a_night_in_tunisia_2_jc.mid')
+        '/Users/spyroot/dev/neural-graph-composer/data/raw/1033w_hungarian_rhapsody_12_(nc)smythe.mid')
 
     # time_differences = []
     #
@@ -470,9 +470,18 @@ if __name__ == '__main__':
         for n in s.notes:
             # print(f"Using tollerance {tolerance_values[seq]}")
             # t = round(round(n.start_time / float(tolerance_values[seq])) * float(tolerance_values[seq]), 3)
-            t = round(round(n.start_time / float(tolerance_values[seq])) * float(tolerance_values[seq]), 3)
-            print(f"{s.instrument.name} start {n.pitch_name} time {n.start_time} {t} round: {round(n.start_time, 3)}")
+            method_one = round(round(n.start_time / float(tolerance_values[seq])) * float(tolerance_values[seq]), 3)
+            method_two = round(n.start_time / float(tolerance_values[seq])) * float(tolerance_values[seq])
+            method_three = round(n.start_time / 0.5) * 0.5
+            method_four = round(n.start_time / 0.2) * 0.2
+            method_five = round(n.start_time, 3)
 
+            print(f"{s.instrument.name} start {n.pitch_name} time {n.start_time} "
+                  f"m1 {method_one} "
+                  f"m2:{method_two} "
+                  f"m3:{method_two} "
+                  f"m4: {method_four} "
+                  f"m5: {method_five} ")
 
 # scaled_velocities = scale_relative_velocities(velocities, scaling_factor)
 # print(scaled_velocities)
