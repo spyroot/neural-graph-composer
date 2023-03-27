@@ -435,12 +435,15 @@ class MidiGraphBuilder:
         current_min_velocity = np.min(velocities)
         current_max_velocity = np.max(velocities)
 
-        # rescale the velocities to the target range
-        rescaled_velocities = ((velocities - current_min_velocity) * (target_max_velocity - target_min_velocity) / (
-                current_max_velocity - current_min_velocity)) + target_min_velocity
+        denominator = current_max_velocity - current_min_velocity
+        if denominator <= 0:
+            rescaled_velocities = np.full_like(velocities, target_min_velocity)
+        else:
+            rescaled_velocities = ((velocities - current_min_velocity) * (
+                        target_max_velocity - target_min_velocity) / denominator) + target_min_velocity
 
         # clip the rescaled velocities to the valid MIDI range (0 to 127)
-        clipped_velocities = np.clip(rescaled_velocities, 0, 127).astype(int)
+        clipped_velocities = np.clip(rescaled_velocities, 0, 127).astype(np.int32)
         return clipped_velocities.tolist()
 
     @staticmethod
@@ -514,12 +517,16 @@ class MidiGraphBuilder:
             if n.is_drum or n.velocity == 0:
                 continue
 
+            assert n.start_time >= 0, "n.start_time must be non-negative"
+
             if tolerance == 0.0:
                 adjusted_time_hash = n.start_time
             elif tolerance_auto and math.isfinite(tolerance):
                 adjusted_time_hash = round(round(n.start_time / tolerance) * tolerance, precision)
             else:
                 adjusted_time_hash = round(n.start_time / tolerance, precision) * tolerance
+
+            assert adjusted_time_hash >= 0, "n.start_time must be non-negative"
 
             time_hash = hash(adjusted_time_hash)
             if time_hash not in data:
@@ -587,6 +594,7 @@ class MidiGraphBuilder:
         # print("vecl velocity_set", velocity_set)
 
         if node_attr_type == NodeAttributeType.Tensor:
+            # print(f" velocity_set set {velocity_set}")
             pitch_attr = torch.FloatTensor(list(pitch_set))
             velocity_attr = torch.FloatTensor(velocity_set) if velocity_set is not None and not np.isscalar(
                 velocity_set) else None
@@ -600,6 +608,8 @@ class MidiGraphBuilder:
                 vel_tensor[:velocity_attr.shape[0]] = velocity_attr
                 pitch_tensor = pitch_tensor.unsqueeze(0)
                 vel_tensor = vel_tensor.unsqueeze(0)
+                assert torch.all(pitch_tensor >= 0), "pitch_tensor must be non-negative"
+                assert torch.all(vel_tensor >= 0), "vel_tensor must be non-negative"
                 new_x = torch.cat((pitch_tensor, vel_tensor), dim=0)
             else:
                 new_x = torch.zeros(feature_vec_size)
