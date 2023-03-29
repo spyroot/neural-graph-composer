@@ -1,9 +1,7 @@
 """
 This data set checker.
-
 Check all edge , mask , hash
 to index , index to hash etc.
-
 Author Mus spyroot@gmail.com
 """
 import glob

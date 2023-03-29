@@ -8,7 +8,7 @@ import torch.nn.functional as F
 import torch_geometric.transforms as T
 from torch_geometric.loader import DataLoader
 from torch_geometric.nn import MLP, GINConv, global_add_pool
-from example_shared import Experiments
+from ngc_shared import Experiments
 from neural_graph_composer.midi_dataset import MidiDataset
 
 

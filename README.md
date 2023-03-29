@@ -5,16 +5,17 @@ as a graph neural network and structure and investigate what insights
 we can gain from this approach.
 
 * Key papers. 
-  * Semi-Supervised Classification with Graph Convolutional Networks https://arxiv.org/abs/1609.02907
-  * Variational Graph Auto-Encoders https://arxiv.org/abs/1611.07308
-  * The graph attentional operator from the `"Graph Attention Networks" https://arxiv.org/abs/1710.10903
+  * [Semi-Supervised Classification with Graph Convolutional Networks](https://arxiv.org/abs/1609.02907)
+  * [Variational Graph Auto-Encoders](https://arxiv.org/abs/1611.07308)
+  * [The graph attentional operator from the Graph Attention Networks](https://arxiv.org/abs/1710.10903)
+  * [GraphRNN: Generating Realistic Graphs with Deep Auto-regressive Model](https://arxiv.org/abs/1802.08773) (ICML 2018)
 
 ## Before you run a code 
  
-* Change dir from where MIDI dataset download files. 
+* Change dir from where MIDI dataset download files or provide list of files.
 * The directory is used to specify the location where all MIDI files are stored. 
-To access the MIDI files, a local web server is required since only I only
-publish free MIDI files i.e. no license or commercial. 
+* To access the MIDI files, a local web server is required since only I only 
+* publish free MIDI files i.e. no license or commercial. 
 
 You can start the local web server by running the command. This only required if building dataset.
 
