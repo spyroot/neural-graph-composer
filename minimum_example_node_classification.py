@@ -17,11 +17,10 @@ from neural_graph_composer.transforms import AddDegreeTransform
 from sklearn.metrics import f1_score
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--dataset', type=str, default='Cora')
 parser.add_argument('--hidden_channels', type=int, default=128)
 parser.add_argument('--heads', type=int, default=8)
 parser.add_argument('--lr', type=float, default=0.005)
-parser.add_argument('--epochs', type=int, default=10000)
+parser.add_argument('--epochs', type=int, default=1000)
 parser.add_argument('--wandb', action='store_true', help='Track experiment')
 args = parser.parse_args()
 
@@ -30,7 +29,6 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 #            hidden_channels=args.hidden_channels, lr=args.lr, device=device)
 
 transform = T.Compose([
-    # RandomNodeDrop(p=0.2),
     AddDegreeTransform(),
     T.NormalizeFeatures(),
 ])
@@ -53,7 +51,12 @@ train_loader = DataLoader(
 test_loader = DataLoader(
     dataset[99:120], batch_size=8, shuffle=False)
 
+
 class NeuralGraphComposer(torch.nn.Module):
+    """
+
+    """
+
     def __init__(self, hidden_channels, num_layers, alpha, theta,
                  shared_weights=True, dropout=0.0):
         super().__init__()
@@ -87,22 +90,6 @@ class NeuralGraphComposer(torch.nn.Module):
         return x
 
 
-class GAT(torch.nn.Module):
-    def __init__(self, in_channels, hidden_channels, out_channels, heads):
-        super().__init__()
-        self.conv1 = GATConv(in_channels, hidden_channels, heads, dropout=0.6)
-        # On the Pubmed dataset, use `heads` output heads in `conv2`.
-        self.conv2 = GATConv(hidden_channels * heads, out_channels, heads=1,
-                             concat=False, dropout=0.6)
-
-    def forward(self, x, edge_index):
-        x = F.dropout(x, p=0.6, training=self.training)
-        x = F.elu(self.conv1(x, edge_index))
-        x = F.dropout(x, p=0.6, training=self.training)
-        x = self.conv2(x, edge_index)
-        return x
-
-
 model = NeuralGraphComposer(hidden_channels=2048,
                             num_layers=9, alpha=0.5, theta=1.0,
                             shared_weights=False, dropout=0.2).to(device)
@@ -111,8 +98,7 @@ optimizer = torch.optim.Adam(model.parameters(), lr=0.005, weight_decay=5e-4)
 
 
 def train(data):
-    """
-    Returns:
+    """train loop with cross entropy
     """
     model.train()
     optimizer.zero_grad()
@@ -129,9 +115,7 @@ def train(data):
 
 @torch.no_grad()
 def test(data):
-    """
-    Returns:
-    """
+    """ Test on 3 set test , train validation. All stats aggregated including F1"""
     model.eval()
     pred = model(data.x, data.edge_index).argmax(dim=-1)
     make_accs = [[0.0] * 3 for _ in range(data.train_mask.shape[1])]
@@ -151,42 +135,46 @@ def test(data):
                                              for column in zip(*f1s)]
 
 
-best_val_acc = final_test_acc = 0
-for epoch in range(1, args.epochs + 1):
-    batch_loss = 0.0
-    train_num_batches = len(train_loader)
-    for i, b in enumerate(train_loader):
-        b.to(device)
-        loss = train(b)
-        batch_loss += loss
+def main():
+    best_val_acc = final_test_acc = 0
+    for epoch in range(1, args.epochs + 1):
+        batch_loss = 0.0
+        train_num_batches = len(train_loader)
+        for i, b in enumerate(train_loader):
+            b.to(device)
+            loss = train(b)
+            batch_loss += loss
 
-    batch_train_acc, batch_val_acc, batch_test_acc = 0.0, 0.0, 0.0
-    train_f1, val_f1, test_f1 = 0.0, 0.0, 0.0
+        batch_train_acc, batch_val_acc, batch_test_acc = 0.0, 0.0, 0.0
+        train_f1, val_f1, test_f1 = 0.0, 0.0, 0.0
 
-    num_batches = len(test_loader)
-    for i, b in enumerate(test_loader):
-        b.to(device)
-        accuracies, f1_scores = test(b)
-        train_acc, val_acc, test_acc = accuracies
-        train_f1, val_f1, test_f1 = f1_scores
-        batch_train_acc += train_acc
-        batch_val_acc += val_acc
-        batch_test_acc += test_acc
-        if val_acc > best_val_acc:
-            best_val_acc = val_acc
-            test_acc = test_acc
+        num_batches = len(test_loader)
+        for i, b in enumerate(test_loader):
+            b.to(device)
+            accuracies, f1_scores = test(b)
+            train_acc, val_acc, test_acc = accuracies
+            train_f1, val_f1, test_f1 = f1_scores
+            batch_train_acc += train_acc
+            batch_val_acc += val_acc
+            batch_test_acc += test_acc
+            if val_acc > best_val_acc:
+                best_val_acc = val_acc
+                test_acc = test_acc
 
-    batch_loss /= train_num_batches
-    batch_train_acc /= num_batches
-    batch_val_acc /= num_batches
-    batch_test_acc /= num_batches
-    print(
-        f"Epoch: {epoch}, "
-        f"Loss: {batch_loss:.5f}, "
-        f"Train train_acc: {batch_train_acc:.5f}, "
-        f"Train val_acc: {batch_val_acc:.5f}, "
-        f"Train test_acc: {batch_test_acc:.5f} "
-        f"Train train_f1: {train_f1:.5f} ",
-        f"Train val_f1: {val_f1:.5f} ",
-        f"Train test_f1: {test_f1:.5f} ")
+        batch_loss /= train_num_batches
+        batch_train_acc /= num_batches
+        batch_val_acc /= num_batches
+        batch_test_acc /= num_batches
+        print(
+            f"Epoch: {epoch}, "
+            f"Loss: {batch_loss:.5f}, "
+            f"Train acc: {batch_train_acc:.5f}, "
+            f"Val acc: {batch_val_acc:.5f}, "
+            f"Test acc: {batch_test_acc:.5f} "
+            f"Train F1: {train_f1:.5f} ",
+            f"Val  F1: {val_f1:.5f} ",
+            f"Test F1: {test_f1:.5f} ")
 
+
+if __name__ == '__main__':
+    main()
