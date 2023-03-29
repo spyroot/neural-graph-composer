@@ -103,6 +103,67 @@ Make sure you check the conda recipe file; it has all dependencies.
 
 * Dockerfile contain everything you need run.  If you build container from scatch\
 
+# Short overview how graph created.
+Below more detail here more compact version of algorithm.
+
+Build a graph for single midi sequence for particular instrument. 
+
+If we need to merge all instruments into a single graph, the caller should
+use the `build` method which will merge all graphs to a single large graph.
+
+- First, we sort all notes based on start time and build a group.
+- A group is a `frozenset`, so no pitch value has duplicates.
+- We use all 12 octave.
+- We have two options for how we compute tolerance:
+    - The first option is to use a fixed size tolerance.
+      This option might not produce good results for all cases since it
+      may group notes that are not meant to be played at the same time, such as notes played
+      one after another that do not form a chord.
+
+   - The second option is to compute tolerance based on percentile.
+     We estimate the percentile and use this as tolerance, so if two
+     notes should be played at the same time (perfectly, not human time), we fix the error
+     and have a good representation of chords vs notes that are separate sequences of notes.
+
+   - A group might be larger than the feature vector size, especially for
+     classical pieces with notes played very tightly in time.
+     We split groups into subgroups. 
+  
+   - Each sub-group is tensor attached to a node.
+  
+   - After we compute a group, we fix the velocity for each note.
+  
+   - The number of velocities must correspond to the number of notes in the group (set). 
+  
+   - If in the original group we had two notes with the same pitch value, e.g. C0 and C0, after 
+     we set them, become just one note, hence we choose the maximum velocity. 
+  
+   - In many pieces, especially classical music, velocity is a very important factor 
+     that captures nuances, but in many MIDI files, values are in the range 20-30, 
+     hence we rescale all values so that the lower bound is 32 and the upper bound is 127.
+
+   - For each subgroup (which in most cases is just one set of 12 notes), 
+     we compute a feature vector consisting of pitch values [56, 60, ...] and the respective velocity vector.
+
+   - We compute a hash for a node. A node hash is `HASH(PITCH_GROUP)`.
+
+   - If the new hash is not yet in graph G, we add it to the graph and add a
+     self-edge with weight 1.
+
+   - If the hash is already in the graph, we increment the self-weight by 1
+     (i.e. capture importance to self).
+
+  - We add an edge from the node before the current node to the current node.
+    This captures the transition from note to note or chord to chord.
+
+  - If A and B are already connected, we increment their weight to capture importance.
+
+  - In all edge cases, the method always returns a graph. If there are no notes,
+    it will return an empty graph so that the upper-layer method can use an iterator structure.
+
+For example, right now the `build` method could technically be linked to the `graph`
+method and emit a graph by graph, so it would build and emit a generator, so we wouldn't
+need to store an internal representation in a list. This would save memory.
 
 # Overview.
 
@@ -114,10 +175,11 @@ Our current proposal takes a novel approach to music generation. If successful, 
 demonstrate a new method for generative modeling and showcase the ability of Graph Neural 
 Networks to extract hidden structures from tasks that may not have an obvious graph structure.
 
-Our inspiration for this work came from Jazz music and the way that Jazz musicians view chord progressions. 
-For musicians, chords or chord inversions are seen as progressions from one shape to another, where a 
-hand takes on a specific form or shape. Similarly, minor chords form a specific shape on a regular piano. 
-If we analyze the music composition process, we can see that it transitions from one shape to another.
+Our inspiration for this work came from Jazz music and the way that Jazz musicians view 
+chord progressions. For musicians, chords or chord inversions are seen as progressions 
+from one shape to another, where a hand takes on a specific form or shape. Similarly, minor chords 
+form a specific shape on a regular piano. If we analyze the music composition process, we can see 
+that it transitions from one shape to another.
 
 What if we reformulate the problem in the following way: each shape of the chord that we represent 
 is a sub-graph of a larger graph G, and each note in a chord is a node that is a sub-graph. 
