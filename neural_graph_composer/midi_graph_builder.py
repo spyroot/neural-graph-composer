@@ -2,6 +2,15 @@
 Main interface consumed to get MIDI information from file to internal representation.
 Currently, it only supports PrettyMIDI.
 
+A class for constructing PyTorch Geometric graphs from MIDI data.
+The `MidiGraphBuilder` generate graph from MIDI sequence and converts graph representation data
+into PyG graphs, with the option to create separate graphs for each instrument.
+The graph nodes represent musical events, such as notes or chords, and can include
+features such as pitch and velocity. The class supports two types of node attribute encoding:
+one-hot vectors and fixed-size float tensors. The `MidiGraphBuilder` also provides options
+for controlling the feature size and tolerance for determining when notes
+are considered simultaneous.
+
 Author Mus spyroot@gmail.com
            mbayramo@stanford.edu
 
@@ -9,16 +18,18 @@ Author Mus spyroot@gmail.com
 import itertools
 import logging
 import math
+import pathlib
 import warnings
 from collections import defaultdict
 from enum import auto, Enum
-from typing import Optional, Generator, Dict, Tuple
+from typing import Optional, Generator, Dict, Tuple, Iterator
 from typing import Union, List, Any
 
 import librosa
 import networkx as nx
 import numpy as np
 import torch
+from numpy import ndarray
 from torch import Tensor
 from torch_geometric.data import Data
 
@@ -40,6 +51,14 @@ class NodeAttributeType(Enum):
 
 class MidiGraphBuilder:
     """
+    A class for constructing PyTorch Geometric graphs from MIDI data.
+    The `MidiGraphBuilder` generate graph from MIDI sequence and converts graph representation data
+    into PyG graphs, with the option to create separate graphs for each instrument.
+    The graph nodes represent musical events, such as notes or chords, and can include
+    features such as pitch and velocity. The class supports two types of node attribute encoding:
+    one-hot vectors and fixed-size float tensors. The `MidiGraphBuilder` also provides options
+    for controlling the feature size and tolerance for determining when notes
+    are considered simultaneous.
     """
     ENCODINGS = {
         NodeAttributeType.Tensor: lambda n: torch.FloatTensor(list(n)),
@@ -47,13 +66,36 @@ class MidiGraphBuilder:
             torch.FloatTensor(list(n)), num_classes=127)
     }
 
-    def __init__(self,
-                 midi_data: Union[MidiNoteSequence, MidiNoteSequences, Generator[MidiNoteSequence, None, None]] = None,
-                 is_instrument_graph: Optional[bool] = True,
-                 hidden_feature_size: int = 64):
+    __slots__ = ["logger", "is_include_velocity", "node_attr_type", "tolerance",
+                 "_max_pitches", "feature_size", "node_attr_name",
+                 "_notes_to_hash", "_hash_to_notes", "_hash_to_index", "_index_to_hash",
+                 "pre_instrument", "_pyg_data", "_sub_graphs", "midi_sequences"]
+
+    def __init__(
+            self,
+            midi_data: Union[MidiNoteSequence, MidiNoteSequences,
+            Generator[MidiNoteSequence, None, None]] = None,
+            is_instrument_graph: Optional[bool] = True,
+            feature_size: int = 12,
+            is_include_velocity: Optional[bool] = False,
+            tolerance: Optional[float] = 0.2,
+            node_attr_type: NodeAttributeType = NodeAttributeType.Tensor):
+
         """
         :param midi_data: midi_sequences object
-        :param is_instrument_graph:  Will build graph for each instrument.
+        :param feature_size: The size of the feature vector to use for the graph embeddings.
+        If None, the maximum MIDI note number (127) will be used as the upper bound for the feature size.
+        By default, the feature size is 12, which means that each note or chord is represented
+        as a tensor of shape (feature_size, ) if velocity is not included, or (2, feature_size)
+        if velocity is included.
+
+        :param is_instrument_graph (bool, optional):  If True, will create a graph for each instrument
+        in the `MidiNoteSequence`. Otherwise, a single graph will be constructed using all instruments.
+        Defaults to True.
+        :param is_include_velocity: If True, velocity will be included as an attribute of the graph nodes.
+        :param tolerance (float, optional): The maximum allowable difference between two note
+        start times for them to be considered simultaneous. It main criterion we
+        use to form a chord vs note. Default value is 0.5.
         """
         if midi_data is not None:
             if isinstance(midi_data, MidiNoteSequence):
@@ -64,40 +106,112 @@ class MidiGraphBuilder:
         else:
             midi_data = None
 
+        if not isinstance(tolerance, (int, float)) or tolerance < 0:
+            raise ValueError("tolerance must be a non-negative number")
+
         self.logger = logging.getLogger(__name__ + '.' + self.__class__.__name__)
         self.logger.setLevel(logging.WARNING)
+
+        self.is_include_velocity = is_include_velocity
+        self.node_attr_type = node_attr_type
+        self.tolerance = tolerance
+
+        self._max_pitches = 127
+
+        if feature_size is None:
+            self.feature_size = 12
+        elif isinstance(feature_size, int) and 0 < feature_size <= self._max_pitches:
+            self.feature_size = feature_size
+        else:
+            raise ValueError("feature_size should be a positive integer less "
+                             "than or equal to the maximum number "
+                             "of pitches in MIDI (127)")
 
         # this a default name that we use for node attributes
         self.node_attr_name = ["attr"]
 
-        # all read-only properties
+        self.feature_size = feature_size
+        self.pre_instrument = is_instrument_graph
+        self.midi_sequences = midi_data
+
+        # all read-only properties. notes to hash and all mappings
         self._notes_to_hash = {}
         self._hash_to_notes = {}
         self._hash_to_index = {}
         self._index_to_hash = {}
-
-        #
-        self.hidden_feature_size = hidden_feature_size
-        #
-        self.pre_instrument = is_instrument_graph
-        # if per_instrument is true and number of instrument is > 0 each wil have own graph
         self._pyg_data = []
-        # all sub graph for a same midi populate here.
         self._sub_graphs = []
-        self.midi_sequences = midi_data
-        self.index = 0
+
+    @classmethod
+    def from_file(cls, file_path: str,
+                  feature_size: Optional[int] = 12,
+                  is_include_velocity: Optional[bool] = False) -> 'MidiGraphBuilder':
+        """Constructs a MidiGraphBuilder object from a MIDI file path.:
+        :param cls:
+        :param file_path: A string representing the path to the MIDI file to be processed.
+        :param is_include_velocity: A boolean indicating whether to build a graph for each instrument in the MIDI file.
+        :param feature_size: The size of the  feature vector to use for the PyTorch Geometric graph.
+        :param is_include_velocity:
+        :return: A MidiGraphBuilder object constructed from the specified MIDI file.
+        """
+        midi_file = pathlib.Path(file_path)
+        if not midi_file.is_file():
+            raise ValueError(f"Invalid file path: {file_path}")
+
+        if midi_file.suffix not in ['.mid', '.midi']:
+            raise ValueError(f"File {file_path} is not a MIDI file.")
+
+        if not midi_file.exists():
+            raise ValueError(f"File {file_path} does not exist.")
+
+        midi_seq = MidiReader.read(file_path)
+        return cls(midi_seq, feature_size=feature_size, is_instrument_graph=is_include_velocity)
+
+    @classmethod
+    def from_midi_sequence(cls,
+                           midi_sequence: MidiNoteSequence,
+                           feature_size: Optional[int] = 12,
+                           is_include_velocity: Optional[bool] = True) -> 'MidiGraphBuilder':
+        """Constructs a new instance of `MidiGraphBuilder`
+        using a `MidiNoteSequence` object.
+
+        :param cls:
+        :param midi_sequence: A `MidiNoteSequence` object containing MIDI data to construct a graph from.
+        :param is_include_velocity: If True, will create a graph for each instrument in the `MidiNoteSequence`.
+                               Otherwise, a single graph will be constructed using all instruments.
+        :param feature_size: The size of the feature vector to use for the graph embeddings.
+        :return: A new instance of `MidiGraphBuilder`.
+        :rtype: MidiGraphBuilder
+        """
+        if not isinstance(midi_sequence, MidiNoteSequence):
+            raise ValueError("midi_sequence should be an instance of MidiNoteSequence")
+        if not midi_sequence.notes or midi_sequence.notes == []:
+            raise ValueError("MidiNoteSequence is empty")
+
+        midi_sequences = MidiNoteSequences(midi_seq=midi_sequence)
+        return cls(midi_sequences, feature_size=feature_size, is_instrument_graph=is_include_velocity)
 
     @property
     def sub_graphs(self) -> List[Graph]:
+        """All graph add to internal list. Note when graph() generated emit
+        graph , graph removed from internal list.
+        :return:
+        """
         return self._sub_graphs
 
     @property
     def pyg_data(self) -> List[PygData]:
+        """All graph serialized to pyg_data. Note when generator emit graph
+        Object released from memory.
+        :return:
+        """
         return self._pyg_data
 
     @classmethod
     def from_midi_sequences(cls, midi_sequences: MidiNoteSequences):
         """Creates a MidiNoteSequence from a list of MidiNote objects.
+        :param midi_sequences:
+        :return:
         """
         if not isinstance(midi_sequences, MidiNoteSequences):
             raise TypeError("midi_sequences must be an instance of MidiNoteSequences")
@@ -109,13 +223,16 @@ class MidiGraphBuilder:
             midi_graph: Any,
             group_node_attrs: Optional[Union[List[str], all]] = None,
             group_edge_attrs: Optional[Union[List[str], all]] = None) -> PygData:
-        """This simular to pyg from networkx but it has some critical
+        """Convert a MIDI graph represented as a NetworkX graph
+        to a PyTorch Geometric Data object. This simular to pyg from networkx but it has some critical
         changes because original semantically does something very different.
 
-        :param midi_graph:
-        :param group_node_attrs:
-        :param group_edge_attrs:
-        :return:
+        :param midi_graph: The MIDI graph as a NetworkX graph object.
+        :param group_node_attrs: A list of node attribute names to group into a single tensor.
+                                 If set to 'all', all node attributes will be grouped into a tensor.
+        :param group_edge_attrs: A list of edge attribute names to group into a single tensor.
+                                 If set to 'all', all edge attributes will be grouped into a tensor.
+        :return: A PyTorch Geometric Data object representing the MIDI graph.
         """
         # default attr we expect
         if group_node_attrs is None:
@@ -164,20 +281,26 @@ class MidiGraphBuilder:
             for key, value in data.items():
                 if key not in group_node_attrs:
                     continue
-
-                if isinstance(value, (tuple, list)) and isinstance(value[0], Tensor):
-                    logging.debug(
-                        f" -> Adding data key {key} case two shape len {len(value)} data[key] len {data[key]}")
-                    data[key] = torch.stack(value, dim=0)
-                else:
-                    try:
+                try:
+                    if isinstance(value, (tuple, list)) and all(isinstance(v, (Tensor, np.ndarray)) for v in value):
+                        data[key] = value
+                    elif isinstance(value, np.ndarray):
+                        data[key] = torch.from_numpy(value)
+                    elif isinstance(value, (tuple, list)) and all(isinstance(v, Tensor) for v in value):
+                        logging.debug(
+                            f" -> Adding data key {key} case two shape len {len(value)} data[key] len {data[key]}")
+                        data[key] = torch.stack(value, dim=0)
+                    elif isinstance(value, (tuple, list)) and all(isinstance(v, float) for v in value):
+                        data[key] = torch.tensor(value).unsqueeze(1)
+                    else:
                         logging.debug(f" -> Adding key {key} to data, values", value)
-                        if isinstance(value, torch.Tensor):
+                        if isinstance(value, (tuple, list)) and all(isinstance(v, Tensor) for v in value):
                             data[key] = value
                         else:
                             data[key] = torch.tensor(value)
-                    except (ValueError, TypeError):
-                        pass
+                except (ValueError, TypeError):
+                    logging.warning("Expected type tensor")
+                    pass
 
         data['edge_index'] = edge_index.view(2, -1)
         data = Data.from_dict(data)
@@ -192,7 +315,7 @@ class MidiGraphBuilder:
                 del data[key]
             data.x = torch.cat(xs, dim=-1)
 
-        if group_edge_attrs is all:
+        if group_edge_attrs == 'all':
             group_edge_attrs = list(edge_attrs)
 
         if group_edge_attrs is not None:
@@ -212,12 +335,12 @@ class MidiGraphBuilder:
         return data
 
     @staticmethod
-    def neighbors(midi_graph, u: List[Any]):
-        """Take list of pitch value and construct a set.
-        Hash and return based on hash all neighbors of given pitch set
-        :param midi_graph:
-        :param u:
-        :return:
+    def neighbors(midi_graph: nx.Graph, u: List[Union[MidiNote, int]]) -> Iterator:
+        """Take list of pitch value or just int and construct a set. The hash of set is node
+        and return all neighbors nodes of this hash.
+        :param midi_graph: The MIDI graph in which to look for neighbors.
+        :param u: A list of `MidiNote`s or integers representing pitch values.
+        :return: An iterator over all neighbors of the given pitch set.
         """
         u_hash = 0
         if len(u) > 0:
@@ -233,58 +356,116 @@ class MidiGraphBuilder:
         return midi_graph.neighbors(u_hash)
 
     @staticmethod
-    def nodes_connected(midi_graph, u, v):
+    def is_connected(
+            midi_graph: nx.Graph,
+            u: Union[List[Union[MidiNote, int]], int],
+            v: Union[List[Union[MidiNote, int]], int]):
         """ Take a midi graph and check if u and v connected.
         u and v must a hash of set. and set it number of pitch values
         i.e.  {51, 61] etc.
 
+        Usage:
+        >>> mg_builder = MidiGraphBuilder.from_file("path/to/midi/file.mid")
+        >>> mg = mg_builder.build()
+        >>> u = hash(frozenset([60, 64, 67]))
+        >>> v = hash(frozenset([60, 64, 68]))
+        >>> mg_builder.is_connected(mg, u, v)
+        True
         :param midi_graph:
-        :param u:
-        :param v:
-        :return:
+        :param u: The hash of the set of pitch values for node u, or a list of `MidiNote`s or pitch values.
+        :param v: The hash of the set of pitch values for node v, or a list of `MidiNote`s or pitch values.
+        :return: True if u and v are connected, False otherwise.
         """
+        if isinstance(u, list):
+            if isinstance(u[0], MidiNote):
+                u = hash(frozenset([n.pitch for n in u]))
+            elif isinstance(u[0], int):
+                u = hash(frozenset(u))
+            else:
+                raise ValueError("invalid type for node u")
+
+        if isinstance(v, list):
+            if isinstance(v[0], MidiNote):
+                v = hash(frozenset([n.pitch for n in v]))
+            elif isinstance(v[0], int):
+                v = hash(frozenset(v))
+            else:
+                raise ValueError("invalid type for node v")
         return u in midi_graph.neighbors(v)
 
     @staticmethod
-    def get_edge_connected(midi_graph, u: List[int], v: List[int]):
-        """Take two list of pitch u=[51,52] v=[61,62], if two sets connected return edge.
+    def get_edge_connected(midi_graph: nx.Graph, u: List[int], v: List[int]):
+        """Take two list of pitch u=[51,52] v=[61,62], if two sets connected return the edge.
         :param midi_graph: a midi graph
         :param u: List of pitches
         :param v: List of pitches
-        :return:
+        :return: a tuple representing the edge if u and v are connected, otherwise None
         """
         hash_of_u = hash(frozenset(u))
         hash_of_v = hash(frozenset(v))
-        return midi_graph.get_edge_data(hash_of_u, hash_of_v)
+        if hash_of_u in midi_graph and hash_of_v in midi_graph:
+            if midi_graph.has_edge(hash_of_u, hash_of_v):
+                return hash_of_u, hash_of_v
+        return None
 
     @staticmethod
-    def connect_instruments(large_graph: nx.Graph, midi_seqs: MidiNoteSequences):
-        """Unused we need experiment to connect graph on pseudo node
-        :param midi_seqs:
+    def merge_nodes(graph: nx.Graph, nodes: List[int]) -> int:
+        """Merges a list of nodes in the graph into a single node.
+        The new node will have an attribute `merged_nodes` that
+        stores the original nodes that were merged.
+        :param graph:
+        :param nodes:
         :return:
         """
-        # Create a mapping from pitch to nodes in the graph
-        pitch_to_nodes = {}
-        for node in large_graph.nodes:
-            pitch = large_graph.nodes[node]["label"]
-            if pitch not in pitch_to_nodes:
-                pitch_to_nodes[pitch] = []
-            pitch_to_nodes[pitch].append(node)
+        # Create a new node representing the merged nodes
+        new_node = max(graph.nodes) + 1
+        graph.add_node(new_node, merged_nodes=nodes)
 
-        # Iterate over all nodes in the graph
-        for node in large_graph.nodes:
-            # check if the node belongs to a different instrument than its neighbors
-            neighbors = list(large_graph.neighbors(node))
-            if not neighbors:
-                continue
-            instrument = midi_seqs[neighbors[0]].instrument.program
-            for neighbor in neighbors:
-                if midi_seqs[neighbor].instrument.program != instrument:
-                    pitch = large_graph.nodes[node]["label"]
-                    for neighbor_node in pitch_to_nodes[pitch]:
-                        if neighbor_node != node:
-                            large_graph.add_edge(node, neighbor_node, weight=1.0)
-                    break
+        # add edges from new node to all neighbors of the merged nodes
+        for node in nodes:
+            for neighbor in graph.neighbors(node):
+                if neighbor not in nodes:
+                    graph.add_edge(new_node, neighbor, **graph.edges[node, neighbor])
+
+        # remove the original nodes from the graph
+        for node in nodes:
+            graph.remove_node(node)
+
+        return new_node
+
+    @staticmethod
+    def connect_instruments(graph: nx.Graph, midi_seqs: MidiNoteSequences):
+        """
+        Connects sub-graphs of different instruments based on their overlapping notes.
+
+        For each pair of neighboring nodes from different instruments, checks if their notes overlap in time
+        and connects the sub-graphs they belong to if they do.
+
+        :param graph: The MIDI graph to connect the sub-graphs of.
+        :param midi_seqs: The MIDI note sequences corresponding to the MIDI graph.
+        """
+        # Create a dictionary mapping pitch and start time to the node it belongs to
+        pitch_start_to_node = {}
+        for node in graph.nodes:
+            pitch_start = (graph.nodes[node]["label"], graph.nodes[node]["start_time"])
+            pitch_start_to_node[pitch_start] = node
+
+        # iterate over each pair of neighboring nodes from different instruments
+        for u, v in graph.edges:
+            if midi_seqs[u].instrument != midi_seqs[v].instrument:
+                # check if the notes of the two neighboring nodes overlap in time
+                u_notes = [n for n in midi_seqs[u].notes if n.start_time == graph.nodes[u]["start_time"]]
+                v_notes = [n for n in midi_seqs[v].notes if n.start_time == graph.nodes[v]["start_time"]]
+                for u_note in u_notes:
+                    for v_note in v_notes:
+                        if u_note.overlaps(v_note):
+                            # if the notes overlap, connect the sub-graphs they belong to
+                            u_pitch_start = (u_note.pitch, u_note.start_time)
+                            v_pitch_start = (v_note.pitch, v_note.start_time)
+                            u_node = pitch_start_to_node.get(u_pitch_start)
+                            v_node = pitch_start_to_node.get(v_pitch_start)
+                            if u_node is not None and v_node is not None:
+                                graph.add_edge(u_node, v_node, weight=1.0)
 
     def build(self,
               midi_seqs: Optional[MidiNoteSequences] = None,
@@ -396,30 +577,41 @@ class MidiGraphBuilder:
         logging.debug(f"Total number of nodes in the dataset: {total_nodes}.")
 
     @staticmethod
-    def same_start_time(n, tolerance=1e-6):
+    def same_start_time(n: MidiNote, tolerance=1e-6) -> bool:
+        """Check if two MidiNote objects have the same start time
+        within a certain tolerance.
+        :param n: MidiNote object
+        :param tolerance: tolerance value for comparing start times
+        :return: bool
+        """
         return abs(n.start_time - n.start_time) < tolerance
 
     @staticmethod
-    def instrument_time_differences(midi_seq: MidiNoteSequence):
-        """Compute difference in start time.
-        :param midi_seq: MidiNoteSequence
-        :return: return
+    def instrument_time_differences(midi_seq: MidiNoteSequence) -> ndarray:
+        """Compute the time differences between consecutive notes in a
+        MidiNoteSequence object for non-drum instruments.
+        :param midi_seq: MidiNoteSequence object
+        :return: list of time differences
         """
         start_times = sorted([n.start_time for n in midi_seq.notes
                               if not midi_seq.instrument.is_drum and len(midi_seq.notes) > 0])
         return np.diff(start_times)
 
     @staticmethod
-    def rescale_velocities(velocities, target_min_velocity=32, target_max_velocity=127):
-        """Rescale velocity in range 64 to 127.
+    def rescale_velocities(
+            velocities: List[int],
+            target_min_velocity: Optional[int] = 32,
+            target_max_velocity: Optional[int] = 127) -> List[int]:
+        """Rescale a list of velocity values to fit within a specified range.
         # Example usage:
             velocities = [20, 26, 23, 20, 40, 20, 60, 20, 30, 20, 20, 30]
             rescaled_velocities = rescale_velocities(velocities)
             print(rescaled_velocities)
 
-        :param velocities:
-        :param target_min_velocity:
-        :param target_max_velocity:
+        :param velocities: list of velocity values
+        :param target_min_velocity: minimum velocity value for rescaled values
+        :param target_max_velocity: maximum velocity value for rescaled values
+        :return: list of rescaled velocity values
         :return:
         """
         velocities = np.array(velocities)
@@ -440,15 +632,16 @@ class MidiGraphBuilder:
             rescaled_velocities = np.full_like(velocities, target_min_velocity)
         else:
             rescaled_velocities = ((velocities - current_min_velocity) * (
-                        target_max_velocity - target_min_velocity) / denominator) + target_min_velocity
+                    target_max_velocity - target_min_velocity) / denominator) + target_min_velocity
 
         # clip the rescaled velocities to the valid MIDI range (0 to 127)
         clipped_velocities = np.clip(rescaled_velocities, 0, 127).astype(np.int32)
         return clipped_velocities.tolist()
 
     @staticmethod
-    def scale_relative_velocities(velocities, scaling_factor=1.0):
-        """Rescale velocity  This specifically for some classical piece
+    def scale_relative_velocities(
+            velocities: List[int], scaling_factor: Optional[float] = 1.0) -> List[int]:
+        """Rescale a list of velocity values to fit within a specified range.
         where velocity very low.
 
         # Example usage:
@@ -456,9 +649,9 @@ class MidiGraphBuilder:
             rescaled_velocities = rescale_velocities(velocities)
             print(rescaled_velocities)
 
-        :param velocities:
-        :param scaling_factor:
-        :return:
+        :param velocities: list of velocity values
+        :param scaling_factor: scaling factor to apply to the velocity values
+        :return: list of rescaled velocity values
         """
         velocities = np.array(velocities)
         # the average velocity
@@ -473,18 +666,31 @@ class MidiGraphBuilder:
         return clipped_velocities.tolist()
 
     @staticmethod
-    def compute_tolerance(midi_seq: MidiNoteSequence, percentile: Optional[int] = 95):
-        """Compute percentile time difference.
-        :param midi_seq:
-        :param percentile:
-        :return:
+    def compute_tolerance(midi_seq: MidiNoteSequence, percentile: Optional[int] = 95) -> float:
+        """Compute the percentile time difference between consecutive
+        notes in a MidiNoteSequence object.
+
+        midi_notes = [
+            MidiNote(pitch=60, start_time=0.0, end_time=0.5),
+            MidiNote(pitch=62, start_time=0.5, end_time=1.0),
+            MidiNote(pitch=64, start_time=1.5, end_time=2.0),
+            MidiNote(pitch=67, start_time=2.0, end_time=2.5),
+            MidiNote(pitch=69, start_time=2.5, end_time=3.0),
+            MidiNote(pitch=71, start_time=3.5, end_time=4.0)
+        ]
+        midi_seq = MidiNoteSequence(midi_notes, instrument=0)
+        tolerance = MidiGraphBuilder.compute_tolerance(midi_seq)
+        print(tolerance)  # expected output: 0.5
+
+        :param midi_seq: MidiNoteSequence object
+        :param percentile: percentile value to compute for the time differences
+        :return: float
         """
         time_differences = MidiGraphBuilder.instrument_time_differences(midi_seq)
-        if len(time_differences) > 0:
-            tolerance_95th_percentile = np.percentile(time_differences, percentile)
-            return tolerance_95th_percentile
-        else:
+        if len(time_differences) < 2:
             return 0.0
+        tolerance_percentile = np.percentile(time_differences, percentile)
+        return tolerance_percentile
 
     @staticmethod
     def compute_data(seq: MidiNoteSequence,
@@ -568,8 +774,12 @@ class MidiGraphBuilder:
         node_tensor = create_tensor(NodeAttributeType.OneHotTensor, pitch_set={60, 62, 64})
 
         # create tensor for node with pitch and velocity sets
-        node_tensor = create_tensor(NodeAttributeType.OneHotTensor, pitch_set={60, 62, 64},
-                                    velocity_set={1, 3, 4, 5}, velocity_num_buckets=5)
+        node_tensor = create_tensor(
+            NodeAttributeType.OneHotTensor,
+            pitch_set={60, 62, 64},
+            velocity_set={1, 3, 4, 5}, velocity_num_buckets=5
+            )
+
         for example
 
         tensor([[64., 60., 62.,  0.],
@@ -586,12 +796,13 @@ class MidiGraphBuilder:
                  or feature_vec_size x num_classes
         :return:
         """
+        # in case we want move to torch bucketize. need to test this before.
         # velocity_labels = torch.FloatTensor(list(velocity_set))
         # velocity_buckets = torch.linspace(start=0, end=127, steps=velocity_num_buckets)
         # velocity_bucket_indices = torch.bucketize(velocity_labels, boundaries=velocity_buckets)
         # velocity_tensor = torch.tensor(velocity_bucket_indices).unsqueeze(1).float()
-        # print("vecl vecttor", velocity_tensor)
-        # print("vecl velocity_set", velocity_set)
+        # print("vec vecttor", velocity_tensor)
+        # print("vec velocity_set", velocity_set)
 
         if node_attr_type == NodeAttributeType.Tensor:
             # print(f" velocity_set set {velocity_set}")
@@ -602,8 +813,8 @@ class MidiGraphBuilder:
             if pitch_attr.shape[0] > feature_vec_size:
                 pitch_attr = pitch_attr[:feature_vec_size]
             if velocity_set is not None:
-                pitch_tensor = torch.zeros(feature_vec_size)
-                vel_tensor = torch.zeros(feature_vec_size)
+                pitch_tensor = torch.zeros(feature_vec_size, dtype=torch.float)
+                vel_tensor = torch.zeros(feature_vec_size, dtype=torch.float)
                 pitch_tensor[:pitch_attr.shape[0]] = pitch_attr
                 vel_tensor[:velocity_attr.shape[0]] = velocity_attr
                 pitch_tensor = pitch_tensor.unsqueeze(0)
@@ -612,7 +823,7 @@ class MidiGraphBuilder:
                 assert torch.all(vel_tensor >= 0), "vel_tensor must be non-negative"
                 new_x = torch.cat((pitch_tensor, vel_tensor), dim=0)
             else:
-                new_x = torch.zeros(feature_vec_size)
+                new_x = torch.zeros(feature_vec_size, dtype=torch.float)
                 new_x[:pitch_attr.shape[0]] = pitch_attr
         elif node_attr_type == NodeAttributeType.OneHotTensor:
             if num_classes is None:
@@ -953,38 +1164,3 @@ class MidiGraphBuilder:
             del self._sub_graphs[:]
             self._pyg_data = []
             self._sub_graphs = []
-
-        @classmethod
-        def from_file(cls, file_path: str,
-                      per_instrument: Optional[bool] = True,
-                      hidden_feature_size: int = 64) -> 'MidiGraphBuilder':
-            """Constructs a MidiGraphBuilder object from a MIDI file path.:
-            :param cls:
-            :param file_path: A string representing the path to the MIDI file to be processed.
-            :param per_instrument: A boolean indicating whether to build a graph for each instrument in the MIDI file.
-            :param hidden_feature_size: The size of the hidden feature vector to use for the PyTorch Geometric graph.
-            :return: A MidiGraphBuilder object constructed from the specified MIDI file.
-            :rtype: MidiGraphBuilder
-            :return 'MidiGraphBuilder'
-            """
-            midi_seq = MidiReader.read(file_path)
-            return cls(midi_seq, per_instrument=per_instrument, hidden_feature_size=hidden_feature_size)
-
-        @classmethod
-        def from_midi_sequence(cls,
-                               midi_sequence: MidiNoteSequence,
-                               per_instrument: Optional[bool] = True,
-                               hidden_feature_size: int = 64) -> 'MidiGraphBuilder':
-            """
-            Constructs a new instance of `MidiGraphBuilder` using a `MidiNoteSequence` object.
-
-            :param cls:
-            :param midi_sequence: A `MidiNoteSequence` object containing MIDI data to construct a graph from.
-            :param per_instrument: If True, will create a graph for each instrument in the `MidiNoteSequence`.
-                                   Otherwise, a single graph will be constructed using all instruments.
-            :param hidden_feature_size: The size of the hidden feature vector to use for the graph embeddings.
-            :return: A new instance of `MidiGraphBuilder`.
-            :rtype: MidiGraphBuilder
-            """
-            midi_sequences = MidiNoteSequences(midi_seq=midi_sequence)
-            return cls(midi_sequences, per_instrument, hidden_feature_size)

@@ -5,10 +5,25 @@ setup_info = dict(
     version='1.0',
     author='Mustafa Bayramov',
     description='Graph Neural Network Composer',
+    license='MIT',
+    python_requires='>=3.9',
     author_email='spyroot@gmail.com',
     packages=['neural_graph_composer'] +
              ['neural_graph_composer.' +
               pkg for pkg in find_packages('neural_graph_composer')],
+    install_requires=[
+        'numpy>=1.23.5',
+        'torch>=2.0.0',
+        'networkx>=2.9.4',
+        'tqdm>=4.62.1',
+        'matplotlib>=3.7',
+        'scipy~=1.10.1',
+    ],
+    classifiers=[
+        'Programming Language :: Python :: 3',
+        'License :: OSI Approved :: MIT License',
+        'Operating System :: OS Independent',
+    ],
     extras_require={
         'dev': [
             'pytest>=3.7',
@@ -19,7 +34,8 @@ setup_info = dict(
             'pytest-mock>=3.1',
             'pre-commit>=2.9'
         ]
-    }
+    },
+    keywords=['graph', 'neural network', 'pytorch', 'networkx'],
 )
 
 setup(**setup_info)

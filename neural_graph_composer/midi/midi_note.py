@@ -9,7 +9,7 @@ import logging
 import math
 import warnings
 from decimal import Decimal
-from typing import Optional, Tuple, Dict, Any, Union, Type
+from typing import Optional, Tuple, Dict, Any, Union
 
 import librosa
 import numpy as np
@@ -105,22 +105,26 @@ class MidiNote(MidiEvent):
         # Ensure that pitch is within the valid MIDI range.
         if not 0 <= pitch <= MAX_MIDI_PITCH:
             warnings.warn(
-                f"Pitch value {pitch} is out of range [0, 127]. Clamping to nearest valid value.")
+                f"Pitch value {pitch} is out of range "
+                f"[0, 127]. Clamping to nearest valid value.")
             pitch = max(0, min(MAX_MIDI_PITCH, pitch))
 
         # clamp velocity value to range [0, 127]
         if not 0 <= velocity <= MAX_MIDI_VELOCITY:
             warnings.warn(
-                f"Velocity value {velocity} is out of range [0, 127]. Clamping to nearest valid value.")
+                f"Velocity value {velocity} is out of range "
+                f"[0, 127]. Clamping to nearest valid value.")
             velocity = max(0, min(MAX_MIDI_VELOCITY, velocity))
 
-        assert end_time > start_time, f"Instrument {instrument} End time value {end_time} " \
-                                      f"should be greater than start time value {start_time}"
+        assert end_time > start_time, \
+            f"Instrument {instrument} End time value {end_time} " \
+            f"should be greater than start time value {start_time}"
         assert isinstance(numerator, int) and numerator > 0, \
             f"Numerator value {numerator} is not a valid value."
 
         # ensure that denominator is a power of 2.
-        assert isinstance(denominator, int) and denominator > 0 and ((denominator & (denominator - 1)) == 0), \
+        assert isinstance(denominator, int) and denominator > 0 \
+               and ((denominator & (denominator - 1)) == 0), \
             f"Denominator value {denominator} is not a valid value."
 
         # midi cc pitch
@@ -137,7 +141,8 @@ class MidiNote(MidiEvent):
         self._program: int = min(max(0, program), 255)
         if not 0 <= instrument <= 127:
             warnings.warn(
-                "Invalid instrument value, should be in range [0, 127]. Clamping to valid range.")
+                "Invalid instrument value, should be in range "
+                "[0, 127]. Clamping to valid range.")
 
         self._instrument = min(max(instrument, 0), 127)
 
@@ -189,8 +194,8 @@ class MidiNote(MidiEvent):
                 self.velocity == other.velocity and
                 self.program == other.program and
                 self.instrument == other.instrument and
-                self.start_time == other.start_time and
-                self.end_time == other.end_time and
+                math.isclose(self.start_time, other.start_time, rel_tol=1e-9, abs_tol=1e-9) and
+                math.isclose(self.end_time, other.end_time, rel_tol=1e-9, abs_tol=1e-9) and
                 self.quantized_start_step == other.quantized_start_step and
                 self.quantized_end_step == other.quantized_end_step and
                 self.voice == other.voice and
@@ -200,23 +205,31 @@ class MidiNote(MidiEvent):
 
     def __lt__(self, other: 'MidiNote') -> bool:
         """
-
         :param other:
         :return:
         """
-        if self.start_time != other.start_time:
+        if abs(self.start_time - other.start_time) > 1e-6:
             return self.start_time < other.start_time
-        return self.end_time < other.end_time
+        elif abs(self.end_time - other.end_time) > 1e-6:
+            return self.end_time < other.end_time
+        else:
+            return self.pitch < other.pitch
 
     def __le__(self, other: 'MidiNote') -> bool:
+        """Returns True if this note's start time is less than or
+        equal to the other note's start time. If the start times are equal,
+        the end times are compared.
+        :param other:
+        :return:
+        """
         """Returns True if this note's start time is less than or
         equal to the other note's start time.
         If the start times are equal, the end times are compared.
         """
         if self.start_time < other.start_time:
             return True
-        elif self.start_time == other.start_time:
-            return self.end_time <= other.end_time
+        elif abs(self.start_time - other.start_time) <= 1e-6:
+            return self.end_time <= other.end_time + 1e-6
         else:
             return False
 
@@ -377,6 +390,15 @@ class MidiNote(MidiEvent):
         :return: The duration of the note in seconds.
         """
         return self.end_time - self.start_time
+
+    def overlaps(self, other: 'MidiNote') -> bool:
+        """Returns True if the current note overlaps in time with
+        the other note, False otherwise.
+        """
+        # Check if the notes overlap in time
+        return (self.start_time <= other.start_time < self.end_time) or \
+            (self.start_time < other.end_time <= self.end_time) or \
+            (self.start_time >= other.start_time and self.end_time <= other.end_time)
 
     def step_duration_in_samples(self) -> int:
         """Return duration of the note in samples.
@@ -641,7 +663,6 @@ class MidiNote(MidiEvent):
         """
         numerator = self.numerator
         denominator = self.denominator
-
         beat_duration = 60.0 / tempo * (numerator / denominator)
         return beat_duration
 
@@ -719,12 +740,11 @@ class MidiNote(MidiEvent):
     @staticmethod
     def pitch_to_freq(pitch: str, octave: int) -> float:
         """Calculate the frequency of a pitch and octave in Hz.
-
         :param pitch: musical pitch (e.g. 'C', 'C#', 'D', etc.)
         :param octave: octave number (e.g. 4 for A440)
         :return: frequency in Hz
 
-                :Example:
+        :Example:
         >>> MusicNote.pitch_to_freq('A', 4)
         440.0
         >>> MusicNote.pitch_to_freq('C', 4)
@@ -752,11 +772,14 @@ class MidiNote(MidiEvent):
         expected_freq = MidiNote.note_to_freq(note)
         #  the expected duration of the note in seconds
         expected_duration = 1 / expected_freq
-        # Check if the note duration is within 0.1 of the expected duration
+        # if the note duration is within 0.1 of the expected duration
         return abs(expected_duration - quarter_note_duration) < 0.1 * quarter_note_duration
 
     @property
     def is_drum(self) -> bool:
+        """if note drum event.
+        :return:
+        """
         return self._is_drum
 
     @staticmethod
@@ -803,8 +826,8 @@ class MidiNote(MidiEvent):
         self._end_time += offset
 
     def stretch(self, amount: float) -> None:
-        """In place Stretch a note by amount
-        :param amount:
+        """In place stretch a note by  amount
+        :param amount: float amount of stretch
         :return:
         """
         self._start_time *= amount

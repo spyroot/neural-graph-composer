@@ -295,7 +295,7 @@ class Test(TestCase):
         self.assertEqual(seq.notes[2], MidiNote(pitch=67, velocity=100, start_time=1.5, end_time=2))
 
     def test_insert02(self):
-        # Create a MidiNoteSequence object with some notes
+        # create a MidiNoteSequence object with some notes and do insert.
         notes = [
             MidiNote(pitch=60, velocity=100, start_time=0, end_time=1),
             MidiNote(pitch=64, velocity=100, start_time=0, end_time=2),
@@ -305,17 +305,23 @@ class Test(TestCase):
         seq = MidiNoteSequence(notes=notes, instrument=1)
         self.assertEqual(len(seq.notes), 3)
 
-        # Insert a note at the beginning of the sequence
-        new_note1 = MidiNote(pitch=62, velocity=100, start_time=0, end_time=1)
+        # insert a note at the beginning of the sequence
+        new_note1 = MidiNote(pitch=59, velocity=100, start_time=0, end_time=1)
+        self.assertTrue(new_note1, new_note1)
         seq.insert(new_note1)
         self.assertEqual(len(seq.notes), 4)
+        print(seq.notes[0])
+        print(new_note1)
+
         self.assertEqual(seq.notes[0], new_note1)
 
-        # Insert a note in the middle of the sequence
+        # insert a note in the middle of the sequence
         new_note2 = MidiNote(pitch=66, velocity=100, start_time=0.5, end_time=1.5)
         seq.insert(new_note2)
+        print(seq)
+
         self.assertEqual(len(seq.notes), 5)
-        self.assertEqual(seq.notes[2], new_note2)
+        self.assertEqual(seq.notes[3], new_note2)
 
         # Insert a note at the end of the sequence
         new_note3 = MidiNote(pitch=69, velocity=100, start_time=3, end_time=4)
@@ -412,17 +418,17 @@ class Test(TestCase):
         self.assertEqual(truncated_seq.notes[1], MidiNote(pitch=64, velocity=100, start_time=0, end_time=2))
         self.assertEqual(truncated_seq.total_time, 2.0)
 
-    def test_merge(self):
+    def test_merge02(self):
+        # Create two MidiNoteSequence objects with some notes and the same instrument
         notes1 = [
             MidiNote(pitch=60, velocity=100, start_time=0, end_time=1, instrument=1),
             MidiNote(pitch=64, velocity=100, start_time=0, end_time=2, instrument=1),
             MidiNote(pitch=67, velocity=100, start_time=1, end_time=3, instrument=1)
         ]
-
         notes2 = [
             MidiNote(pitch=72, velocity=100, start_time=0, end_time=1.5, instrument=1),
-            MidiNote(pitch=76, velocity=100, start_time=0, end_time=3, instrument=1),
-            MidiNote(pitch=79, velocity=100, start_time=1, end_time=4, instrument=1)
+            MidiNote(pitch=76, velocity=100, start_time=1, end_time=2.5, instrument=1),
+            MidiNote(pitch=79, velocity=100, start_time=2, end_time=3.5, instrument=1)
         ]
 
         seq1 = MidiNoteSequence(notes=notes1, instrument=1)
@@ -432,17 +438,19 @@ class Test(TestCase):
 
         expected_notes = [
             MidiNote(pitch=60, velocity=100, start_time=0, end_time=1, instrument=1),
-            MidiNote(pitch=64, velocity=100, start_time=0, end_time=2, instrument=1),
             MidiNote(pitch=72, velocity=100, start_time=0, end_time=1.5, instrument=1),
+            MidiNote(pitch=64, velocity=100, start_time=0, end_time=2, instrument=1),
+            MidiNote(pitch=76, velocity=100, start_time=1, end_time=2.5, instrument=1),
             MidiNote(pitch=67, velocity=100, start_time=1, end_time=3, instrument=1),
-            MidiNote(pitch=76, velocity=100, start_time=0, end_time=3, instrument=1),
-            MidiNote(pitch=79, velocity=100, start_time=1, end_time=4, instrument=1)
+            MidiNote(pitch=79, velocity=100, start_time=2, end_time=3.5, instrument=1)
         ]
 
-        self.assertEqual(len(seq1.notes), 6)
-        self.assertListEqual(seq1.notes, expected_notes)
-        self.assertEqual(seq1.total_time, 4)
-        self.assertEqual(seq1.instrument, 1)
+        self.assertEqual(len(expected_notes), len(seq1.notes),
+                         f"Expected {len(expected_notes)} actual {len(seq1.notes)}")
+        for i, note in enumerate(expected_notes):
+            self.assertEqual(seq1.notes[i], note)
+
+        self.assertEqual(seq1.total_time, 3.5)
 
 
 

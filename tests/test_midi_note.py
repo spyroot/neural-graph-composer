@@ -561,4 +561,119 @@ class Test(TestCase):
         self.assertFalse(note4 > note5)
         self.assertFalse(note4 >= note5)
 
+    def test_non_overlapping_notes(self):
+        note1 = MidiNote(pitch=60, start_time=0, end_time=1)
+        note2 = MidiNote(pitch=62, start_time=1.5, end_time=2.5)
+        self.assertFalse(note1.overlaps(note2))
+
+    def test_notes_with_same_start_and_end_time(self):
+        note1 = MidiNote(pitch=60, start_time=0, end_time=1)
+        note3 = MidiNote(pitch=64, start_time=1.0001, end_time=1.0002)
+        self.assertFalse(note1.overlaps(note3))
+
+    def test_notes_with_same_start_time_but_different_end_time(self):
+        note1 = MidiNote(pitch=60, start_time=0, end_time=1)
+        note4 = MidiNote(pitch=67, start_time=0.5, end_time=1.5)
+        self.assertTrue(note1.overlaps(note4))
+
+    def test_notes_with_different_start_time_but_same_end_time(self):
+        note1 = MidiNote(pitch=60, start_time=0, end_time=1)
+        note5 = MidiNote(pitch=69, start_time=0.5, end_time=1)
+        self.assertTrue(note1.overlaps(note5))
+
+    def test_fully_overlapping_notes(self):
+        note1 = MidiNote(pitch=60, start_time=0, end_time=1)
+        note6 = MidiNote(pitch=72, start_time=0.5, end_time=1.5)
+        self.assertTrue(note1.overlaps(note6))
+
+    def test_partially_overlapping_notes(self):
+        note1 = MidiNote(pitch=60, start_time=0, end_time=1)
+        note7 = MidiNote(pitch=74, start_time=0.5, end_time=1.5)
+        self.assertTrue(note1.overlaps(note7))
+
+    def test_non_overlapping_notes2(self):
+        note1 = MidiNote(pitch=60, start_time=0, end_time=1)
+        note2 = MidiNote(pitch=62, start_time=1.5, end_time=2.5)
+        self.assertFalse(note1.overlaps(note2))
+
+    def test_notes_with_same_pitch_but_no_overlap(self):
+        note1 = MidiNote(pitch=60, start_time=0, end_time=1)
+        note8 = MidiNote(pitch=60, start_time=1.5, end_time=2.5)
+        self.assertFalse(note1.overlaps(note8))
+
+    def test_notes_with_same_start_and_end_time_but_different_pitch(self):
+        note1 = MidiNote(pitch=60, start_time=0, end_time=1)
+        note9 = MidiNote(pitch=61, start_time=1, end_time=1.001)
+        self.assertFalse(note1.overlaps(note9))
+
+    def test_notes_with_same_pitch_and_same_start_time_but_different_end_time(self):
+        note1 = MidiNote(pitch=60, start_time=0.1, end_time=1.001)
+        note10 = MidiNote(pitch=60, start_time=0.1, end_time=2.001)
+        self.assertTrue(note1.overlaps(note10))
+
+    def test_overlap_precision(self):
+        # Test notes with a small gap between them
+        note1 = MidiNote(pitch=60, start_time=0, end_time=1)
+        note2 = MidiNote(pitch=62, start_time=1.0001, end_time=2.0001)
+        self.assertFalse(note1.overlaps(note2))
+
+        note3 = MidiNote(pitch=60, start_time=0, end_time=1)
+        note4 = MidiNote(pitch=62, start_time=1.00001, end_time=2.00001)
+        self.assertFalse(note3.overlaps(note4))
+
+        note5 = MidiNote(pitch=60, start_time=0, end_time=0.0001)
+        note6 = MidiNote(pitch=62, start_time=0.00005, end_time=0.00015)
+        self.assertTrue(note5.overlaps(note6))
+
+        note7 = MidiNote(pitch=60, start_time=0, end_time=1)
+        note8 = MidiNote(pitch=62, start_time=0.0000001, end_time=0.5)
+        self.assertTrue(note7.overlaps(note8))
+
+    def test_note_lt(self):
+        note0 = MidiNote(pitch=60, start_time=0.01, end_time=1.001)
+        note1 = MidiNote(pitch=60, start_time=0, end_time=1.001)
+        note2 = MidiNote(pitch=64, start_time=0, end_time=2)
+        note3 = MidiNote(pitch=67, start_time=1, end_time=3)
+        note4 = MidiNote(pitch=72, start_time=0.5, end_time=1.5)
+        note5 = MidiNote(pitch=60, start_time=0, end_time=0.5)
+        note6 = MidiNote(pitch=60, start_time=0.001, end_time=1.001)
+
+        self.assertTrue(note1 < note2)
+        self.assertTrue(note2 < note3)
+        self.assertTrue(note1 < note3)
+        self.assertTrue(note1 < note4)
+        self.assertFalse(note2 < note1)
+        self.assertFalse(note3 < note2)
+        self.assertFalse(note3 < note1)
+        self.assertFalse(note4 < note1)
+        self.assertTrue(note5 < note1)
+        self.assertTrue(note6 < note0)
+
+    def test_note_le(self):
+        note1 = MidiNote(pitch=60, start_time=0, end_time=1)
+        note2 = MidiNote(pitch=64, start_time=0, end_time=2)
+        note3 = MidiNote(pitch=67, start_time=1, end_time=3)
+        note4 = MidiNote(pitch=72, start_time=0.5, end_time=1.5)
+
+        self.assertTrue(note1 <= note2)
+        self.assertTrue(note2 <= note3)
+        self.assertTrue(note1 <= note3)
+        self.assertTrue(note1 <= note4)
+        self.assertFalse(note2 <= note1)
+        self.assertFalse(note3 <= note2)
+        self.assertFalse(note3 <= note1)
+        self.assertFalse(note4 <= note1)
+        self.assertTrue(note1 <= note1)
+
+        note5 = MidiNote(pitch=60, start_time=0, end_time=1 + 1e-7)
+        note6 = MidiNote(pitch=64, start_time=0, end_time=2 - 1e-7)
+        note7 = MidiNote(pitch=67, start_time=1 - 1e-7, end_time=3 + 1e-7)
+        note8 = MidiNote(pitch=72, start_time=0.5 + 1e-7, end_time=1.5 - 1e-7)
+
+        self.assertTrue(note1 <= note5)
+        self.assertTrue(note2 <= note6)
+        self.assertTrue(note3 <= note7)
+        self.assertTrue(note1 <= note8)
+        self.assertFalse(note2 <= note1)
+
 

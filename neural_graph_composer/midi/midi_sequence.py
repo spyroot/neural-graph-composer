@@ -151,6 +151,26 @@ class MidiNoteSequence(MidiEvents, MidiQuantization):
         """
         return self.__resolution
 
+    @resolution.setter
+    def resolution(self, value):
+        """Sets the resolution of the sequence.
+        :param value: int, the new resolution value
+        """
+        if not isinstance(value, int):
+            raise TypeError("Resolution must be an integer")
+        self.__resolution = value
+
+        old_resolution = self.__resolution
+
+        if old_resolution != value:
+            resolution_diff = value / old_resolution
+            for note in self.notes:
+                note.start_time *= resolution_diff
+                note.end_time *= resolution_diff
+                note.start_time /= old_resolution
+                note.end_time /= old_resolution
+
+
     @property
     def total_quantized_steps(self):
         """Returns the total number of quantized steps in the sequence."""
@@ -193,6 +213,11 @@ class MidiNoteSequence(MidiEvents, MidiQuantization):
 
         if self.instrument != other.instrument:
             raise ValueError("Instrument must be the same for both MidiNoteSequences.")
+
+        # all notes in both sequences have the same instrument
+        if any(note.instrument != self.instrument for note in self.notes) \
+                or any(note.instrument != other.instrument for note in other.notes):
+            raise ValueError("All notes in both sequences must have the same instrument")
 
         midi_seq = MidiNoteSequence(instrument=self.instrument)
         if self.notes is not None:
@@ -318,20 +343,6 @@ class MidiNoteSequence(MidiEvents, MidiQuantization):
             self.total_time = max(self.total_time, max_end_time)
         else:
             raise TypeError("notes must be a MidiNote object or a list of MidiNote objects")
-
-    # def merge(self, other: 'MidiNoteSequence'):
-    #     """Merges two MidiNoteSequence objects into a single MidiNoteSequence object.
-    #     :param other: MidiNoteSequence to merge into self
-    #     :return: Merged MidiNoteSequence
-    #     """
-    #     if not isinstance(other, MidiNoteSequence):
-    #         raise TypeError(f"Cannot merge 'MidiNoteSequence' and '{type(other)}'")
-    #     if self.instrument != other.instrument:
-    #         raise ValueError("Instrument must be the same for both MidiNoteSequences.")
-    #
-    #     merged_notes = self.notes + other.notes
-    #     merged_total_time = max(self.total_time, other.total_time)
-    #     return
 
     def as_note_seq(self) -> List[int]:
         """    Returns the note sequence of the MidiNoteSequence object as a list
@@ -508,7 +519,8 @@ class MidiNoteSequence(MidiEvents, MidiQuantization):
         if len(split_times) < 2:
             raise TypeError(f"Split time {split_times} should have start and end.")
 
-        assert all(t1 <= t2 for t1, t2 in zip(split_times[:-1], split_times[1:])), "Unsorted list of splits."
+        assert all(t1 <= t2 for t1, t2 in
+                   zip(split_times[:-1], split_times[1:])), "Unsorted list of splits."
 
         if any(t >= self.total_time for t in split_times[:-1]):
             raise TypeError(
@@ -531,7 +543,6 @@ class MidiNoteSequence(MidiEvents, MidiQuantization):
             sub_seq = sub_sequences[sbs]
             sub_seq.notes.append(copy.deepcopy(note))
             sub_seq.notes[-1].start_time -= split_times[sbs]
-
             sub_seq.notes[-1].end_time = min(note.end_time, split_times[sbs + 1]) - split_times[sbs]
             sub_seq.notes[-1].end_time = min(sub_seq.notes[-1].end_time,
                                              sub_seq.total_time + sub_seq.notes[-1].start_time)
@@ -737,14 +748,14 @@ class MidiNoteSequence(MidiEvents, MidiQuantization):
         self.validate_instrument()
         other.validate_instrument()
 
+        all_notes = sorted(self.notes + other.notes, key=lambda n: n)
+        self.notes = []
         # merge the notes
-        for note in other.notes:
+        for note in all_notes:
             idx = bisect.bisect_left(self.notes, note)
             self.notes.insert(idx, note)
 
         self._adjust_total_time()
-        # self.notes.extend(other.notes)
-        # self.notes.sort(key=lambda note: note.start_time)
 
     def cut_in_place(self, cut_size: int):
         """In place cut
@@ -788,35 +799,3 @@ class MidiNoteSequence(MidiEvents, MidiQuantization):
             callback(file_path, self.instrument, notes, self.total_time)
         else:
             raise ValueError("Cannot save empty MIDI note sequence")
-
-    def test_merge(self):
-        # Create two MidiNoteSequence objects with some notes
-        notes1 = [
-            MidiNote(pitch=60, velocity=100, start_time=0, end_time=1),
-            MidiNote(pitch=64, velocity=100, start_time=0, end_time=2),
-            MidiNote(pitch=67, velocity=100, start_time=1, end_time=3)
-        ]
-        notes2 = [
-            MidiNote(pitch=72, velocity=100, start_time=0, end_time=1.5),
-            MidiNote(pitch=76, velocity=100, start_time=1, end_time=2.5),
-            MidiNote(pitch=79, velocity=100, start_time=2, end_time=3.5)
-        ]
-
-        seq1 = MidiNoteSequence(notes=notes1, instrument=1)
-        seq2 = MidiNoteSequence(notes=notes2, instrument=2)
-
-        # Merge the two sequences
-        merged_seq = seq1.merge(seq2)
-
-        # Check that the merged sequence contains all the notes in the correct order
-        expected_notes = [
-            MidiNote(pitch=60, velocity=100, start_time=0, end_time=1, instrument=1),
-            MidiNote(pitch=64, velocity=100, start_time=0, end_time=2, instrument=1),
-            MidiNote(pitch=72, velocity=100, start_time=0, end_time=1.5, instrument=2),
-            MidiNote(pitch=67, velocity=100, start_time=1, end_time=3, instrument=1),
-            MidiNote(pitch=76, velocity=100, start_time=1, end_time=2.5, instrument=2),
-            MidiNote(pitch=79, velocity=100, start_time=2, end_time=3.5, instrument=2)
-        ]
-        self.assertEqual(len(merged_seq.notes), len(expected_notes))
-        for i, note in enumerate(expected_notes):
-            self.assertEqual(merged_seq.notes[i], note)
