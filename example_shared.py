@@ -9,6 +9,9 @@ from matplotlib import pyplot as plt
 from torch.utils.data import random_split
 from torch_geometric.data import Data
 
+import matplotlib.pyplot as plt
+from sklearn.manifold import TSNE
+
 
 class Activation(Enum):
     """Activation enum so we can experiment.
@@ -33,8 +36,8 @@ class Experiments:
             lr: Optional[float] = 0.01,
             activation: Optional[Activation] = Activation.ReLU,
             train_update_rate: Optional[int] = 1,
-            test_update_freq: Optional[int] = 10,
-            eval_update_freq: Optional[int] = 20,
+            test_update_freq: Optional[int] = 1,
+            eval_update_freq: Optional[int] = 1,
             save_freq: Optional[int] = 20):
         """
         """
@@ -51,7 +54,8 @@ class Experiments:
         assert isinstance(epochs, int) and epochs > 0, "epochs must be a positive integer"
 
         self._dataset = midi_dataset
-        self.num_classes = self._dataset.total_num_classes
+        print(self._dataset.y.shape[0])
+        self.num_classes = self._dataset.y.shape[0]
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         assert isinstance(self.device, torch.device), "device must be a torch.device object"
 
@@ -507,3 +511,13 @@ def create_synthetic_data():
 
     return subgraph_data
 
+
+def visualize(h, color):
+    z = TSNE(n_components=2).fit_transform(h.detach().cpu().numpy())
+
+    plt.figure(figsize=(10, 10))
+    plt.xticks([])
+    plt.yticks([])
+
+    plt.scatter(z[:, 0], z[:, 1], s=70, c=color, cmap="Set2")
+    plt.show()

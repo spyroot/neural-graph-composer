@@ -365,7 +365,7 @@ def rescale_velocities(velocities, target_min_velocity=64, target_max_velocity=1
 
     # Rescale the velocities to the target range
     rescaled_velocities = ((velocities - current_min_velocity) * (target_max_velocity - target_min_velocity) / (
-                current_max_velocity - current_min_velocity)) + target_min_velocity
+            current_max_velocity - current_min_velocity)) + target_min_velocity
 
     # Clip the rescaled velocities to the valid MIDI range (
 
@@ -379,7 +379,7 @@ def rescale_velocities(velocities, target_min_velocity=64, target_max_velocity=1
 
     # Rescale the velocities to the target range
     rescaled_velocities = ((velocities - current_min_velocity) * (target_max_velocity - target_min_velocity) / (
-                current_max_velocity - current_min_velocity)) + target_min_velocity
+            current_max_velocity - current_min_velocity)) + target_min_velocity
 
     # Clip the rescaled velocities to the valid MIDI range (0 to 127)
     clipped_velocities = np.clip(rescaled_velocities, 0, 127).astype(int)
@@ -425,30 +425,25 @@ def instrument_time_differences(midi_note_sequence):
     return differences
 
 
-if __name__ == '__main__':
+def tolerance_test():
+    """Test for different method ,
+     hungarian_rhapsody has crazy timing so nice to explore on this piece.
     """
-    """
-    # read_empty_files()
-    # print("Tolerance checker:")
-    # tolerance_checker()
-    # print("Dataset creation checker:")
-    # different_datasets()
-
     midi_seqs = MidiReader.read(
-        '/Users/spyroot/dev/neural-graph-composer/data/raw/1033w_hungarian_rhapsody_12_(nc)smythe.mid')
+        '/data/raw/1033w_hungarian_rhapsody_12_(nc)smythe.mid')
 
-    # time_differences = []
-    #
-    # for seq in midi_seqs:
-    #     print(midi_seqs[seq].notes)
-    #     start_times = sorted([n.start_time for n in midi_seqs[seq].notes
-    #                           if not midi_seqs[seq].instrument.is_drum])
-    #     differences = np.diff(start_times)
-    #     time_differences.extend(differences)
-    #
-    # time_differences = np.array(time_differences)
-    # tolerance_95th_percentile = np.percentile(time_differences, 95)
-    # print(tolerance_95th_percentile)
+    time_differences = []
+
+    for seq in midi_seqs:
+        print(midi_seqs[seq].notes)
+        start_times = sorted([n.start_time for n in midi_seqs[seq].notes
+                              if not midi_seqs[seq].instrument.is_drum])
+        differences = np.diff(start_times)
+        time_differences.extend(differences)
+
+    time_differences = np.array(time_differences)
+    tolerance_95th_percentile = np.percentile(time_differences, 95)
+    print(tolerance_95th_percentile)
 
     tolerance_values = []
 
@@ -483,5 +478,32 @@ if __name__ == '__main__':
                   f"m4: {method_four} "
                   f"m5: {method_five} ")
 
-# scaled_velocities = scale_relative_velocities(velocities, scaling_factor)
-# print(scaled_velocities)
+    scaled_velocities = scale_relative_velocities(velocities, scaling_factor)
+    print(scaled_velocities)
+
+
+def data_type():
+    raw_paths = ['data/raw/a_night_in_tunisia_2_jc.mid']
+    midi_dataset = MidiDataset(root="./data_test",
+                               midi_files=raw_paths,
+                               per_instrument_graph=False,
+                               tolerance=0.5,
+                               include_velocity=True)
+    print(midi_dataset.x[0])
+
+    ds = MidiDataset(root="./data",
+                     per_instrument_graph=False,
+                     tolerance=0.5,
+                     include_velocity=True)
+    print(ds[0].x[0])
+
+
+if __name__ == '__main__':
+    """
+    """
+    # read_empty_files()
+    # print("Tolerance checker:")
+    # tolerance_checker()
+    # print("Dataset creation checker:")
+    # different_datasets()
+    data_type()

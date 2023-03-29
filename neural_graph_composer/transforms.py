@@ -6,24 +6,46 @@ Author Mus spyroot@gmail.com
 import torch
 
 from typing import Optional, Tuple
+
+import torch_geometric
 import torch_geometric.transforms as T
 from torch_geometric.data import Data
 
 import torch
 from torch_geometric.transforms import BaseTransform
 
+import torch_geometric.utils as utils
+
+
+class AddDegreeTransform(BaseTransform):
+    def __call__(self, data):
+        x = data.x.reshape(data.num_nodes, -1)
+        # in_degree = utils.in_degree(data.edge_index[1], data.num_nodes)
+        # out_degree = utils.out_degree(data.edge_index[0], data.num_nodes)
+
+        degree = torch_geometric.utils.degree(data.edge_index[0], num_nodes=data.num_nodes)
+
+        degree = degree.reshape(-1, 1)
+        data.directed = True
+        data.x = torch.cat([x, degree], dim=1)
+        return data
+
+    def __repr__(self):
+        return f'{self.__class__.__name__}()'
+
 
 class GraphIDTransform(BaseTransform):
+    """This one I created to add graph_id.  Note I got good result on graphs but that
+    was not a point.
     """
 
-    """
     def __init__(self, dataset):
         super().__init__()
         self.dataset = dataset
         self.num_classes = dataset.num_classes
+        print(f"Creating Graph ID transform Node proper {self.num_classes}")
 
     def __call__(self, data):
-
         """Transform add graph id.
 
         It requires dataset to have public method that it can access.
@@ -58,6 +80,7 @@ class RandomNodeDrop(T.BaseTransform):
         """
         :param p: p (float): The probability of dropping each node.
         """
+        print(f"Creating Random Node proper with p {p}")
         self.p = p
 
     def __call__(self, data: Data) -> Data:
@@ -161,8 +184,6 @@ class RandomEdgeDrop(T.BaseTransform):
 
     def __repr__(self):
         return f'{self.__class__.__name__}(p={self.p})'
-
-
 
 
 def example_normalize(y_hash_values):

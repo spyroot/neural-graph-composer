@@ -27,16 +27,22 @@ from torch import nn
 import torch.nn.functional as F
 import torch_geometric
 import torch_geometric.transforms as T
+from torch.nn import Linear
 from torch.optim.lr_scheduler import StepLR
+from torch_geometric.data import dataset
 from torch_geometric.loader import DataLoader
-from torch_geometric.nn import GCNConv, GINConv, GATConv
+from torch_geometric.nn import GCNConv, GINConv, GATConv, GCN2Conv
 import wandb
 
 from matplotlib import pyplot as plt
 from sklearn.metrics import f1_score
+from torch_geometric.transforms import RandomNodeSplit
+
 from example_shared import Experiments
 from neural_graph_composer.midi_dataset import MidiDataset
-from neural_graph_composer.transforms import RandomEdgeDrop, RandomNodeDrop, GraphIDTransform
+from neural_graph_composer.transforms import RandomEdgeDrop, RandomNodeDrop, GraphIDTransform, AddDegreeTransform
+
+torch.cuda.empty_cache()
 
 
 class Activation(Enum):
@@ -101,6 +107,74 @@ class MultiTaskLoss(nn.Module):
         return total_loss
 
 
+class Net(torch.nn.Module):
+    def __init__(self, hidden_channels, num_layers, alpha, theta, num_features, num_classes,
+                 shared_weights=True, dropout=0.0):
+        super().__init__()
+        print(f"Create {num_features} {num_classes}")
+        self.lins = torch.nn.ModuleList()
+        self.lins.append(Linear(num_features, hidden_channels))
+        self.lins.append(Linear(hidden_channels, num_classes))
+
+        self.convs = torch.nn.ModuleList()
+        for layer in range(num_layers):
+            self.convs.append(
+                GCN2Conv(hidden_channels, alpha, theta, layer + 1,
+                         shared_weights, normalize=False))
+
+        self.dropout = dropout
+
+    def forward(self, x, adj_t):
+        x = F.dropout(x, self.dropout, training=self.training)
+        x = x_0 = self.lins[0](x).relu()
+
+        for conv in self.convs:
+            h = F.dropout(x, self.dropout, training=self.training)
+            h = conv(h, x_0, adj_t)
+            x = h + x
+            x = x.relu()
+
+        x = F.dropout(x, self.dropout, training=self.training)
+        x = self.lins[1](x)
+
+        return x
+
+
+class GINNet(torch.nn.Module):
+    def __init__(self, num_features, hidden_size, num_classes):
+        super(GINNet, self).__init__()
+        self.conv1 = GINConv(torch.nn.Sequential(
+            torch.nn.Linear(num_features, hidden_size),
+            torch.nn.BatchNorm1d(hidden_size),
+            torch.nn.ReLU(),
+            torch.nn.Linear(hidden_size, hidden_size),
+            torch.nn.BatchNorm1d(hidden_size),
+            torch.nn.ReLU(),
+            torch.nn.Linear(hidden_size, hidden_size),
+            torch.nn.BatchNorm1d(hidden_size),
+            torch.nn.ReLU(),
+        ))
+        self.conv2 = GINConv(torch.nn.Sequential(
+            torch.nn.Linear(hidden_size, hidden_size),
+            torch.nn.BatchNorm1d(hidden_size),
+            torch.nn.ReLU(),
+            torch.nn.Linear(hidden_size, hidden_size),
+            torch.nn.BatchNorm1d(hidden_size),
+            torch.nn.ReLU(),
+            torch.nn.Linear(hidden_size, hidden_size),
+            torch.nn.BatchNorm1d(hidden_size),
+            torch.nn.ReLU(),
+        ))
+        self.fc = torch.nn.Linear(hidden_size, num_classes)
+
+    def forward(self, x, edge_index, edge_attr):
+        x = F.relu(self.conv1(x, edge_index, edge_attr))
+        x = F.relu(self.conv2(x, edge_index, edge_attr))
+        x = F.dropout(x, training=self.training)
+        x = self.fc(x)
+        return F.log_softmax(x, dim=1)
+
+
 class GCN3(torch.nn.Module):
     """Three layer GCN with option swap activation layer.
     """
@@ -111,7 +185,7 @@ class GCN3(torch.nn.Module):
             num_classes: int,
             num_graphs: int,
             activation: Optional[Activation] = Activation.ReLU,
-            dropout_p: float = 0.5):
+            dropout_p: float = 0.2):
         super(GCN3, self).__init__()
 
         if activation == Activation.ReLU:
@@ -125,15 +199,16 @@ class GCN3(torch.nn.Module):
         elif activation == Activation.Tanh:
             self.activation = nn.Tanh()
 
-        print(f"  GCN Conv {num_feature}")
+        print(f"  GCN Conv feature {num_feature} num classes {num_classes} num graphs {num_graphs}")
         self.conv1 = GCNConv(num_feature, hidden_channels)
-        self.prelu01 = nn.PReLU(hidden_channels)
+        # self.prelu01 = nn.PReLU(hidden_channels)
         self.conv2 = GCNConv(hidden_channels, hidden_channels)
-        self.prelu02 = nn.PReLU(hidden_channels)
-        self.conv3 = GCNConv(hidden_channels, hidden_channels)
+        # self.prelu02 = nn.PReLU(hidden_channels)
+        self.conv3 = GCNConv(hidden_channels, num_classes)
 
-        self.graph_fc = nn.Linear(hidden_channels, num_graphs)
-        self.classifier = nn.Linear(hidden_channels, num_classes)
+        # self.graph_fc = nn.Linear(hidden_channels, num_graphs)
+        # self.fc1 = nn.Linear(hidden_channels, hidden_channels)
+        # self.classifier = nn.Linear(hidden_channels, num_classes)
 
         # self.prelu02 = nn.PReLU(hidden_channels)
         # self.classifier = nn.Linear(hidden_channels, num_classes)
@@ -146,7 +221,7 @@ class GCN3(torch.nn.Module):
         :return:
         """
         x, edge_index, batch = data.x, data.edge_index, data.batch
-        batch_size, num_node_features, num_features_per_node = x.shape
+        batch_size, _, = x.shape
 
         x = x.reshape(batch_size, -1)  # Reshape input tensor
         x = self.conv1(x, edge_index)
@@ -158,15 +233,18 @@ class GCN3(torch.nn.Module):
 
         x = self.conv3(x, edge_index)
 
-        global_mean = torch_geometric.nn.global_add_pool(x, batch)
-        graph_logits = self.graph_fc(global_mean)
+        # global_mean = torch_geometric.nn.global_add_pool(x, batch)
+        # graph_logits = self.graph_fc(global_mean)
 
-        x = self.classifier(x)
+        # x = self.fc1(x)
+        # x = self.activation(x)
+        # x = self.classifier(x)
 
         # x = global_mean_pool(x, data.batch)
         # node_logits = self.classifier(self.conv3(x, edge_index))
-
-        return F.log_softmax(x, dim=1), F.log_softmax(graph_logits, dim=-1)
+        # F.log_softmax(graph_logits, dim=-1)
+        #
+        return F.log_softmax(x, dim=1)
 
 
 class GIN(torch.nn.Module):
@@ -244,6 +322,7 @@ class ExampleNodeClassification(Experiments):
     def __init__(
             self, epochs: int,
             batch_size: int,
+            num_graph: int,
             midi_dataset: MidiDataset, hidden_dim: int,
             model_type: Optional[str] = "GCN3",
             lr: Optional[float] = 0.01,
@@ -251,7 +330,7 @@ class ExampleNodeClassification(Experiments):
             train_update_rate: Optional[int] = 1,
             test_update_freq: Optional[int] = 10,
             eval_update_freq: Optional[int] = 20,
-            save_freq: Optional[int] = 20,
+            save_freq: Optional[int] = 100,
             is_data_split: Optional[bool] = False):
         """Example experiment for training a graph neural network on MIDI data.
 
@@ -281,16 +360,14 @@ class ExampleNodeClassification(Experiments):
         self._batch_size = batch_size
         self._hidden_dim = hidden_dim
         self._feature_dim = midi_dataset.num_node_features
-        self._num_classes = midi_dataset.total_num_classes
+        self._num_classes = midi_dataset.num_classes
+
         self._lr = lr
         self._is_gin = False
         self._is_gat = False
 
-        self.train_dataset = midi_dataset
-        self.test_dataset = midi_dataset
-
         self.train_loader = DataLoader(
-            midi_dataset, batch_size=self._batch_size, shuffle=True)
+            midi_dataset[99:102], batch_size=self._batch_size, shuffle=True, drop_last=True)
 
         # if we do random split it produce different dataset,
         # at least this our current understanding how it works. :)
@@ -300,10 +377,38 @@ class ExampleNodeClassification(Experiments):
         self.test_loader = None
 
         self.val_loader = DataLoader(
-            midi_dataset, batch_size=batch_size, shuffle=False)
+            midi_dataset[99:102], batch_size=batch_size, shuffle=False, drop_last=True)
 
         self.test_loader = DataLoader(
-            midi_dataset, batch_size=batch_size, shuffle=False)
+            midi_dataset[99:102], batch_size=batch_size, shuffle=False, drop_last=True)
+
+        transform = T.Compose([
+            # RandomNodeDrop(p=0.2),
+            AddDegreeTransform(),
+            T.NormalizeFeatures(),
+        ])
+
+        pre_transform = T.Compose([T.GCNNorm()])
+
+        dataset = MidiDataset(root="./data",
+                              transform=transform,
+                              pre_transform=pre_transform,
+                              per_instrument_graph=False,
+                              tolerance=0.5,
+                              include_velocity=True)
+
+        # dataset.data.train_mask = None
+        # dataset.data.val_mask = None
+        # dataset.data.test_mask = None
+        #
+        transform.transforms.insert(0, RandomNodeSplit(
+            num_splits=2, num_train_per_class=100, num_val=0.1, num_test=0.3))
+
+        self.train_loader = DataLoader(
+            dataset[99:102], batch_size=8, shuffle=True)
+
+        self.test_loader = DataLoader(
+            dataset[99:102], batch_size=8, shuffle=False)
 
         self.model_type = model_type
         if model_type == "GCN3":
@@ -311,10 +416,14 @@ class ExampleNodeClassification(Experiments):
                   f"hidden size {self._hidden_dim} num classes "
                   f"{self._num_classes} batch size {self._batch_size} "
                   f"lr {self._lr} activate {activation.value}")
-            self.model = GCN3(
-                self._feature_dim * 2, self._hidden_dim,
-                self._num_classes, len(midi_dataset),
-                activation=activation).to(self.device)
+            # self.model = GCN3(
+            #     self._feature_dim, self._hidden_dim,
+            #     self._num_classes, num_graph,
+            #     activation=activation).to(self.device)
+
+            self.model = Net(hidden_channels=2048, num_layers=9, alpha=0.5, theta=1.0,
+                             num_features=self._feature_dim, num_classes=self._num_classes,
+                             shared_weights=False, dropout=0.2).to(device)
         elif model_type == "GAT":
             print(f"Creating GAT feature dim: {self._feature_dim} "
                   f"hidden size {self._hidden_dim} num classes "
@@ -353,76 +462,73 @@ class ExampleNodeClassification(Experiments):
         total_graph = 0
 
         for i, b in enumerate(self.train_loader):
-
-            train_batch = b
-            #
-            # if isinstance(b, list):
-            #     train_batch, _, _ = b
-            # else:
-            #     train_batch = b
-            # print(f"######### graph id in batch  {b.graph_id}")
-            train_mask = train_batch.train_mask
-
-            train_batch.to(self.device)
             self.optimizer.zero_grad()
-            out, graph_logit = self.model(train_batch)
-            y_true = train_batch.y[train_mask]
+            train_batch = b
+            # train_batch, _, _ = b if isinstance(b, list): else b
+            train_batch.to(self.device)
+            # mask = torch.rand(train_batch.x.shape[0], train_batch.x.shape[1]) > 0.5
+            # train_batch.x[mask] = 0
+            out = self.model(train_batch.x, train_batch.edge_index)
 
-            if self._is_gin:
-                node_idx = torch.arange(out.shape[0]).to(self.device)
-                out_sum = torch.zeros((train_batch.num_nodes, out.shape[1]),
-                                      dtype=torch.float).to(self.device)
-                out_sum.scatter_(0, node_idx.unsqueeze(1).expand(-1, out.shape[1]), out)
-                out_train = out_sum[train_mask]
-            elif self._is_gat:
-                node_idx = torch.arange(out.shape[0]).to(self.device)
-                out_sum = torch.zeros((train_batch.num_nodes, out.shape[1]),
-                                      dtype=torch.float).to(self.device)
-                out_sum.scatter_(0, node_idx.unsqueeze(1).expand(-1, out.shape[1]), out)
-                out_train = out_sum[train_mask, -self._num_classes:]
-            else:
-                out_train = out[train_mask]
+            for mask_id in range(train_batch.train_mask.shape[1]):
+                train_mask = train_batch.train_mask[:, mask_id]
+                y_true = train_batch.y[train_mask]
 
-            graph_ids = train_batch.graph_id
-            selected_logits = graph_logit[torch.arange(self._batch_size), graph_ids]
-            graph_ids = graph_ids.to(torch.float)
-            loss_graph_loss = self.loss_fn(selected_logits, graph_ids)
+                if self._is_gin:
+                    node_idx = torch.arange(out.shape[0]).to(self.device)
+                    out_sum = torch.zeros((train_batch.num_nodes, out.shape[1]),
+                                          dtype=torch.float).to(self.device)
+                    out_sum.scatter_(0, node_idx.unsqueeze(1).expand(-1, out.shape[1]), out)
+                    out_train = out_sum[train_mask]
+                elif self._is_gat:
+                    node_idx = torch.arange(out.shape[0]).to(self.device)
+                    out_sum = torch.zeros((train_batch.num_nodes, out.shape[1]),
+                                          dtype=torch.float).to(self.device)
+                    out_sum.scatter_(0, node_idx.unsqueeze(1).expand(-1, out.shape[1]), out)
+                    out_train = out_sum[train_mask, -self._num_classes:]
+                else:
+                    out_train = out[train_mask]
 
-            # print(f"Graph loss {loss_graph_loss}")
-            # print(f"out_train {out_train.shape} {y_true.shape}")
-            # loss = F.nll_loss(out_train, y_true)
+                # graph_ids = train_batch.graph_id
+                # selected_logits = graph_logit[torch.arange(self._batch_size), graph_ids]
+                # graph_ids = graph_ids.to(torch.float)
+                # left = F.cross_entropy(selected_logits, graph_ids, reduction='mean')
+                right = F.cross_entropy(out_train, y_true, reduction='mean')
 
-            loss = self.loss_fn(out_train, y_true)
+                combine_loss = right
+                combine_loss.backward(retain_graph=True)
 
-            combine_loss = loss_graph_loss + loss
-            combine_loss.backward()
+                loss_all += train_batch.num_graphs * combine_loss.item()
+                epoch_loss += combine_loss.item()
+                total_graph += train_batch.num_graphs
+
+                pred_class_idx = torch.argmax(out_train, dim=1)
+                # tp = ((mask_y == mask_pred) & (mask_pred == m)).sum().item()
+                # fp = ((mask_y != mask_pred) & (mask_pred == m)).sum().item()
+                # fn = ((mask_y != mask_pred) & (mask_y == m)).sum().item()
+                #
+
+                pred_class_idx = torch.argmax(out_train, dim=1)
+                tp += torch.sum((pred_class_idx == 1) & (y_true == 1)).item()
+                fp += torch.sum((pred_class_idx == 1) & (y_true == 0)).item()
+                fn += torch.sum((pred_class_idx == 0) & (y_true == 1)).item()
+
+                pred_train_all.append(pred_class_idx)
+                y_train_all.append(y_true)
+
             self.optimizer.step()
 
-            loss_all += train_batch.num_graphs * combine_loss.item()
-            epoch_loss += combine_loss.item()
-            total_graph += train_batch.num_graphs
-
-            # calculate F1 and accuracy metrics
-            pred_train = out_train.argmax(dim=1).cpu().numpy()
-            y_train_np = y_true.cpu().numpy()
-            pred_train_all.append(pred_train)
-            y_train_all.append(y_train_np)
-
-            pred_class_idx = torch.argmax(out_train, dim=1)
-            tp += torch.sum((pred_class_idx == 1) & (y_true == 1)).item()
-            fp += torch.sum((pred_class_idx == 1) & (y_true == 0)).item()
-            fn += torch.sum((pred_class_idx == 0) & (y_true == 1)).item()
-
         # calculate F1 and accuracy metrics
-        pred_train_all = np.concatenate(pred_train_all, axis=0)
-        y_train_all = np.concatenate(y_train_all, axis=0)
+        pred_train_all = torch.cat(pred_train_all, dim=0).cpu().numpy()
+        y_train_all = torch.cat(y_train_all, dim=0).cpu().numpy()
         precision = tp / (tp + fp + 1e-9)
         recall = tp / (tp + fn + 1e-9)
         train_f1 = f1_score(y_train_all, pred_train_all, average='macro')
         train_acc = (pred_train_all == y_train_all).sum() / len(y_train_all)
-
+        #
         loss_avg = loss_all / total_graph
         return loss_avg, train_f1, train_acc, recall, precision
+        # return loss_avg, 0.0, 0.0, 0.0, 0.0
 
     def train(self):
         """
@@ -446,7 +552,7 @@ class ExampleNodeClassification(Experiments):
                 f"Train Precision: {train_precision:.5f}, "
                 f"Train Recall: {train_recall:.5f}")
 
-            self.scheduler.step()
+            # self.scheduler.step()
             self.update_metrics(loss_avg, train_f1, train_acc, train_recall, train_precision)
 
             if e % self.test_update_freq == 0:
@@ -504,7 +610,7 @@ class ExampleNodeClassification(Experiments):
         correct = 0
         tp, fp, fn = 0., 0., 0.
 
-        for b in iter(data_loader):
+        for b in iter(self.test_loader):
             if isinstance(b, list):
                 if is_eval:
                     _, val, _ = b
@@ -515,73 +621,54 @@ class ExampleNodeClassification(Experiments):
             else:
                 batch = b
 
-            mask = batch.test_mask
-
+            batch_mask = batch.test_mask
             if is_eval:
-                mask = batch.val_mask
+                batch_mask = batch.val_mask
 
             data = batch.to(self.device)
-            out, graph_logit = self.model(data)
-            if self._is_gin:
-                node_idx = torch.arange(out.shape[0]).to(self.device)
-                out_sum = torch.zeros((batch.num_nodes, out.shape[1]), dtype=torch.float).to(self.device)
-                out_sum.scatter_(0, node_idx.unsqueeze(1).expand(-1, out.shape[1]), out)
-                pred_masked = out_sum[mask]
-            elif self._is_gat:
-                node_idx = torch.arange(out.shape[0]).to(self.device)
-                out_sum = torch.zeros((batch.num_nodes, out.shape[1]), dtype=torch.float).to(self.device)
-                out_sum.scatter_(0, node_idx.unsqueeze(1).expand(-1, out.shape[1]), out)
-                pred_masked = out_sum[mask, -self._num_classes:]
-            else:
-                pred_masked = out[mask]
+            out = self.model(data.x, data.edge_index).argmax(dim=-1)
+            for mask_id in range(b.train_mask.shape[1]):
+                mask = batch_mask[:, mask_id]
+                if self._is_gin:
+                    node_idx = torch.arange(out.shape[0]).to(self.device)
+                    out_sum = torch.zeros((batch.num_nodes, out.shape[1]), dtype=torch.float).to(self.device)
+                    out_sum.scatter_(0, node_idx.unsqueeze(1).expand(-1, out.shape[1]), out)
+                    pred_masked = out_sum[mask]
+                elif self._is_gat:
+                    node_idx = torch.arange(out.shape[0]).to(self.device)
+                    out_sum = torch.zeros((batch.num_nodes, out.shape[1]), dtype=torch.float).to(self.device)
+                    out_sum.scatter_(0, node_idx.unsqueeze(1).expand(-1, out.shape[1]), out)
+                    pred_masked = out_sum[mask, -self._num_classes:]
+                else:
+                    pred = out[mask]
 
-            # correct2 = int((out.argmax(dim=-1) == data.y).sum())
-            # print(out.argmax(dim=-1))
-            # print(f"correct unmasked {correct2}")
+                pred = out[mask]
+                y_masked = batch.y[mask]
+                mask_sum = int(mask.sum())
+                batch_correct = int((out[mask] == y_masked).sum()) / mask_sum
+                correct += batch_correct
 
-            graph_ids = batch.graph_id
-            selected_logits = graph_logit[torch.arange(self._batch_size), graph_ids]
-            graph_ids = graph_ids.to(torch.float)
 
-            predicted_graph_ids = torch.argmax(selected_logits, dim=0)
-            num_correct = torch.sum(torch.eq(predicted_graph_ids, graph_ids)).item()
-            graph_accuracy = num_correct / self._batch_size
-            if graph_accuracy > 0.0:
-                print(f"Graph prediction {graph_accuracy}")
+                # calculate tp, fp, fn for F1 score, precision, and recall
+                tp = ((y_masked == pred) & (pred == 1)).sum().item()
+                fp = ((y_masked != pred) & (pred == 1)).sum().item()
+                fn = ((y_masked != pred) & (y_masked == 1)).sum().item()
 
-            y_masked = batch.y[mask]
+                pred_class_idx = torch.argmax(out_train, dim=1)
+                tp = ((y_masked == pred) & (pred == m)).sum().item()
+                fp = ((y_masked != pred) & (pred == m)).sum().item()
+                fn = ((y_masked != pred) & (pred == m)).sum().item()
 
-            # pred = model(graph).argmax(dim=1)
-            # correct = (pred[mask] == graph.y[mask]).sum()
-            # acc = int(correct) / int(mask.sum())
+                tp += torch.sum((pred == 1) & (y_masked == 1)).item()
+                fp += torch.sum((pred == 1) & (y_masked == 0)).item()
+                fn += torch.sum((pred == 0) & (y_masked == 1)).item()
+                total += y_masked.shape[0]
 
-            pred_class_idx = torch.argmax(pred_masked, dim=1)
-            batch_correct = torch.sum(torch.eq(pred_class_idx, y_masked)).item()
-            correct += batch_correct
-
-            # print(f"correct  {batch_correct} "
-            #       f"{y_masked.shape[0]} {pred_class_idx.shape }"
-            #       f"mask shape batch correct {batch_correct / y_masked.shape[0]}")
-
-            # print(f"correct masked argmax {correct} "
-            #       f"{y_masked.shape} mask shape "
-            #       f"{pred_class_idx.shape}")
-
-            # _y_masked = batch.y[mask].cpu().numpy()
-            # _pred_class_idx = torch.argmax(pred_masked, dim=1).cpu().numpy()
-            # _accuracy = accuracy_score(_y_masked, _pred_class_idx)
-            # print(_accuracy)
-            # calculate tp, fp, fn for F1 score, precision, and recall
-
-            tp += torch.sum((pred_class_idx == 1) & (y_masked == 1)).item()
-            fp += torch.sum((pred_class_idx == 1) & (y_masked == 0)).item()
-            fn += torch.sum((pred_class_idx == 0) & (y_masked == 1)).item()
-            total += y_masked.shape[0]
-
-        accuracy = correct / total
+        accuracy = correct / len(self.test_loader)
         precision = tp / (tp + fp + 1e-9)
         recall = tp / (tp + fn + 1e-9)
         f1 = 2 * (precision * recall) / (precision + recall + 1e-9)
+
         return accuracy, f1, precision, recall
 
     def save_model(self, filename, output_dir='checkpoints'):
@@ -685,11 +772,11 @@ if __name__ == '__main__':
     """
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     parser = argparse.ArgumentParser()
-    parser.add_argument('--batch_size', type=int, default=2)
+    parser.add_argument('--batch_size', type=int, default=8)
     parser.add_argument('--epochs', type=int, default=1000)
     parser.add_argument('--model_type', type=str, default='GCN3', choices=['GCN3', 'GIN', 'GAT'])
-    parser.add_argument('--hidden_dim', type=int, default=64)
-    parser.add_argument('--lr', type=float, default=0.01)
+    parser.add_argument('--hidden_dim', type=int, default=16)
+    parser.add_argument('--lr', type=float, default=0.005)
     parser.add_argument('--graph_per_instrument', type=bool, default=False)
     parser.add_argument('--wandb', action='store_true', help='Track experiment')
     parser.add_argument('--random_split', type=bool, default=False)
@@ -705,61 +792,48 @@ if __name__ == '__main__':
 
     # todo add node random split and test.
     args = parser.parse_args()
-    if args.random_split:
-        transform = T.Compose([
-            T.NormalizeFeatures(),
-            to_device_selective,
-            T.ToDevice(device),
-            T.RandomLinkSplit(
-                num_val=0.05,
-                num_test=0.1,
-                is_undirected=False,
-                split_labels=True,
-                add_negative_train_samples=False)
-        ])
-    else:
-        transform = T.Compose([
-            # T.NormalizeFeatures(),
-            to_device_selective,
-        ])
 
-    # if args.random_drop_nodes:
-    #     transform.transforms.append(RandomNodeDrop(p=0.2))
+    transform = T.Compose([
+        # RandomNodeDrop(p=0.2),
+        AddDegreeTransform(),
+        T.NormalizeFeatures(),
+    ])
 
-    ds = MidiDataset(root="./data",
-                     transform=transform,
-                     per_instrument_graph=args.graph_per_instrument,
-                     tolerance=args.midi_tolerance,
-                     include_velocity=True)
-    print(ds[0].x[0])
+    pre_transform = T.Compose([T.GCNNorm()])
 
-    transform.transforms.insert(0, GraphIDTransform(ds))
+    dataset = MidiDataset(root="./data",
+                          transform=transform,
+                          pre_transform=pre_transform,
+                          per_instrument_graph=False,
+                          tolerance=0.5,
+                          include_velocity=True)
 
-    # print(ds.num_classes)
+    # dataset.data.train_mask = None
+    # dataset.data.val_mask = None
+    # dataset.data.test_mask = None
+    #
+    transform.transforms.insert(0, RandomNodeSplit(
+        num_splits=2, num_train_per_class=100, num_val=0.1, num_test=0.3))
+
+    # train_loader = DataLoader(
+    #     dataset[99:102], batch_size=8, shuffle=True)
+    #
+    # test_loader = DataLoader(
+    #     dataset[99:102], batch_size=8, shuffle=False)
+
+    # print(transform)
+    # print("Example of data", ds[0].x[0])
+    # print("Number of classes", ds.num_classes)
+    # print("Number of graphs", len(ds))
 
     example_model = ExampleNodeClassification(
         epochs=args.epochs,
         batch_size=args.batch_size,
-        midi_dataset=ds,
+        num_graph=len(dataset),
+        midi_dataset=dataset,
         hidden_dim=args.hidden_dim,
         model_type=args.model_type,
         lr=args.lr,
-        activation=Activation.PReLU)
+        activation=Activation.ELU)
 
-    print(len(ds))
-
-    #
-    # # loader = DataLoader(
-    # #     midi_dataset, batch_size=batch_size, shuffle=False)
-    # #
-    # # transform = ToDevice(device)
-    # # assert str(transform) == f'ToDevice({device})'
-    #
-    # # print("Total num classes", ds.num_classes)
-    # # print(ds[0])
-    #
-    # # print(data)
-    # # for key, value in data:
-    # #     print(key, value.device)
-    #
     example_model.train()
