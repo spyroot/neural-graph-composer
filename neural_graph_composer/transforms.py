@@ -1,5 +1,13 @@
 """
+Several transform used in different spots.
+
+Add Degree Transform used to add node degree
+to feature vector. I found this method provide better result.
+
 Randomly drop nodes or edges.
+
+GraphIDTransform add graph id. It useful
+for graph classification task.
 
 Author Mus spyroot@gmail.com
 """
@@ -14,17 +22,13 @@ from torch_geometric.data import Data
 import torch
 from torch_geometric.transforms import BaseTransform
 
-import torch_geometric.utils as utils
-
 
 class AddDegreeTransform(BaseTransform):
+    """Add degree to x.
+    """
     def __call__(self, data):
         x = data.x.reshape(data.num_nodes, -1)
-        # in_degree = utils.in_degree(data.edge_index[1], data.num_nodes)
-        # out_degree = utils.out_degree(data.edge_index[0], data.num_nodes)
-
         degree = torch_geometric.utils.degree(data.edge_index[0], num_nodes=data.num_nodes)
-
         degree = degree.reshape(-1, 1)
         data.directed = True
         data.x = torch.cat([x, degree], dim=1)
@@ -63,10 +67,6 @@ class GraphIDTransform(BaseTransform):
         """
         graph_id = self.dataset.get_graph_id()
         data.graph_id = torch.tensor(graph_id, dtype=torch.long)
-        # new_y = torch.zeros((data.y.shape[0] + 1), dtype=torch.long)
-        # new_y[:-1] = data.y   # node labels to new tensor
-        # new_y[-1] = graph_id  # graph ID to last column
-        # data.y = new_y
         return data
 
     def __repr__(self):
