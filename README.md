@@ -17,6 +17,69 @@ we can gain from this approach.
 * To access the MIDI files, a local web server is required since only I only 
 * publish free MIDI files i.e. no license or commercial. 
 
+##  Current TODO.
+"In the current implementation, constructing a graph consisting of several instruments forms 
+a large graph. However, we have noticed that in some MIDI files, the final graph 
+remains disconnected, i.e., a large graph comprises two or more disconnected graphs.
+When Graph Builder constructs a final graph representation, the issue we describe 
+presents a problem for the node classifier to perform classification. 
+
+There are two explanations for this. One is that the graph itself needs to be sufficiently 
+rich in representing a music piece, i.e., if MIDI representation is trivial, and the 
+quality of the MIDI affects the overall performance of the model. 
+
+The second reason might be the disconnect between the two sub-graphs of a large graph.
+To validate and narrow down this issue and improve the model, we will implement a sub-graph 
+merge that takes two or more graphs and finds a point of intersection 
+(where the point of intersection is an embedding attached to a node representing the start of a note). 
+
+For example, if a second instrument is connected to another node at some point in time,
+imagine a chord taking place at T0 and, at the same time (given some window, a second instrument 
+playing a melody or sub-line), that is the point where two graphs need to be connected. 
+It bridges the graphs between the two instruments. 
+If we do this before computing the hash, we must account for O(N) per each node since 
+collapsing a notes into a single representation we significantly reduces computation. 
+
+The new algorithm will do the following: We will include a start time as set. 
+F
+or example, if we have a hash (C, E, G) representing a particular chord and it chord. 
+The algorithm will attach a list of time steps where a musical piece's chord 
+or note sequence occurred. The algorithm will attach these steps as an attribute 
+for each node. So large graph might contain to sub-graph ( disconnected) 
+where each node has a list of all-time steps. (i.e., a set of time steps)  
+
+The last pass will create a bridge for all set intersections and will 
+connect that intersection. The important part is that we need to have all 
+time steps since the second or Kth instrument might connect to another 
+instrument only at a particular time; thus, if we have node C E F 
+and let baseline follow F note, it implies at each particular 
+interval we might C E F and at some other interval C E G F.
+
+Hence we can formulate as  G1, and G2 are sub-graph of large graph G, 
+a set of intersection points in time is a point where G1 and G2 must be connected. 
+Moreover, since in our representation, a HASH of set describe a set of 
+note playing simultaneously it implies that the point of intersection 
+needs to merge the Vertex of G1 and Vertex of G1 to a single Vertex. 
+The point in the graph where C E F intersects with F will form a 
+new merge node where C E F G.
+
+Graphically 
+
+Let's assume we have a graph where A and B point CEF chord and G 1
+A --->  edge to (C,E,G) <---- B
+
+E --> F <-- G G2, where E and G point to F note. 
+Note that F and CEG played in pieces together at some point at some time-steps. 
+Therefore, we merge F with CEG.
+
+         E
+         |
+A---> C E G F <--- B
+		 |
+		 G
+
+Thus, we can capture a relation between different instrument.  
+
 You can start the local web server by running the command. This only required if building dataset.
 
 ```bash

@@ -12,6 +12,8 @@ from torch_geometric.data import Data
 import matplotlib.pyplot as plt
 from sklearn.manifold import TSNE
 
+from neural_graph_composer.midi_dataset import MidiDataset
+
 
 class Activation(Enum):
     """Activation enum so we can experiment.
@@ -29,12 +31,11 @@ class Experiments:
     """
 
     def __init__(
-            self, epochs,
-            batch_size,
-            midi_dataset,
+            self,
+            midi_dataset: MidiDataset,
+            epochs: Optional[int] = 100,
+            batch_size: Optional[int] = 8,
             model_type: Optional[str] = "",
-            lr: Optional[float] = 0.01,
-            activation: Optional[Activation] = Activation.ReLU,
             train_update_rate: Optional[int] = 1,
             test_update_freq: Optional[int] = 1,
             eval_update_freq: Optional[int] = 1,
@@ -54,19 +55,19 @@ class Experiments:
         assert isinstance(epochs, int) and epochs > 0, "epochs must be a positive integer"
 
         self._dataset = midi_dataset
-        print(self._dataset.y.shape[0])
-        self.num_classes = self._dataset.y.shape[0]
+        print("Number of graphs", self._dataset)
+        self.num_classes = self._dataset.num_classes
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         assert isinstance(self.device, torch.device), "device must be a torch.device object"
 
         self.datasize = 0
         self.test_size = 0
         self._num_workers = 0
-        self._batch_size = batch_size
         self._epochs = epochs
         self.current_epoch = 0
         self.start_epoch = 0
         self.model_type = model_type
+        self._batch_size = batch_size
 
         self.save_freq = save_freq
         self.train_update_rate = train_update_rate
@@ -74,8 +75,11 @@ class Experiments:
         self.eval_update_freq = eval_update_freq
 
         #
-        self.data_loader = None
+        self.train_loader = None
+        self.test_loader = None
+
         self.train_ration = 0.8
+
         self.test_dataset = None
         self.train_dataset = None
         self.model = None
